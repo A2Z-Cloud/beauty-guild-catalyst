@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "targets": [
+      "beauty_guild_api"
+    ],
+    "ignore": [],
+    "source": "functions"
+  },
+  "client": {
+    "source": "beautyguildclient",
+    "plugin": "zcatalyst-cli-plugin-react"
+  }
+}

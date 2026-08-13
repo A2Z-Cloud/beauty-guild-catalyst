@@ -1,0 +1,15 @@
+{
+  "short_name": "Beauty Guild",
+  "name": "Beauty Guild Member Portal",
+  "icons": [
+    {
+      "src": "beauty-guild-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#E0007F",
+  "background_color": "#ffffff"
+}
