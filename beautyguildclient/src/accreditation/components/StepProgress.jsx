@@ -1,11 +1,11 @@
 import React from 'react';
 import { STEP_LABELS } from '../data';
 
-export default function StepProgress({ current }) {
+export default function StepProgress({ current, labels = STEP_LABELS }) {
   return (
     <div className="acc-steps">
       <div className="acc-steps-row">
-        {STEP_LABELS.map((label, i) => {
+        {labels.map((label, i) => {
           const done = i < current;
           const isCurrent = i === current;
           const state = done ? 'done' : isCurrent ? 'current' : 'upcoming';
@@ -15,7 +15,7 @@ export default function StepProgress({ current }) {
                 <div className={`acc-step-dot ${state}`}>{done ? '✓' : i + 1}</div>
                 <span className={`acc-step-label${isCurrent ? ' current' : ''}`}>{label}</span>
               </div>
-              {i < STEP_LABELS.length - 1 && (
+              {i < labels.length - 1 && (
                 <div className={`acc-step-line${done ? ' done' : ''}`} />
               )}
             </React.Fragment>

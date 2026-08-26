@@ -134,19 +134,22 @@ export const ACCREDITATION_VAT = 59;
 export const ACCREDITATION_GRAND_TOTAL = ACCREDITATION_FEE + ACCREDITATION_VAT;
 export const ACCREDITATION_WITH_MEMBERSHIP = 409;
 
+// Additional Training Venue fee, per the "Accredited Venues" section of the school
+// portal document: "just £50 + VAT per year".
+export const ADDITIONAL_VENUE_FEE = 50;
+export const ADDITIONAL_VENUE_VAT = 10;
+export const ADDITIONAL_VENUE_TOTAL = ADDITIONAL_VENUE_FEE + ADDITIONAL_VENUE_VAT;
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 // "03/03/2027" -> "03 March 2027", matching the production "Accreditation Valid Until" format.
-export function formatLongDate(ddmmyyyy) {
-  const [dd, mm, yyyy] = ddmmyyyy.split('/');
+// Accepts either a UK "DD/MM/YYYY" string or a raw CRM ISO "YYYY-MM-DD" date.
+export function formatLongDate(dateStr) {
+  const [dd, mm, yyyy] = dateStr.includes('/')
+    ? dateStr.split('/')
+    : dateStr.split('-').reverse();
   return `${dd} ${MONTHS[parseInt(mm, 10) - 1]} ${yyyy}`;
 }
-
-// Shared mock data for the "Manage School" Tutors detail page - only "A2Z Test School"
-// matches real production data seen in screenshots; other schools reuse it for now.
-export const ACCREDITED_LECTURERS = [
-  { name: 'Tega Test', membershipNumber: '207389', membershipExpiry: '03/03/2027' },
-];
 
 export const initialAccState = () => ({
   mode: 'register',

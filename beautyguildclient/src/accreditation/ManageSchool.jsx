@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { ACCREDITED_LECTURERS, formatLongDate } from './data';
+import { formatLongDate } from './data';
 import { DocumentIcon, GraduationCapIcon, PeopleIcon, PencilSquareIcon, CertificateIcon, BackArrowIcon } from './icons';
-import { createQualification, fetchQualificationContext, fetchQualifications } from './api';
+import { createQualification, fetchQualificationContext, fetchQualifications, fetchAccreditationVenues, fetchMissingGtiCourses, fetchAccreditationTutors } from './api';
+import AddVenueWizard from './AddVenueWizard';
+import Modal from './components/Modal';
 
 const OPTIONS = [
   { key: 'profile', title: 'School Profile', desc: 'View your training centre details', Icon: PencilSquareIcon },
@@ -75,8 +77,19 @@ function TrainingCentreInfoBox({ school }) {
   );
 }
 
-function CoursesDetail({ school }) {
+function CoursesDetail({ school, contactId }) {
   const courses = school.courseList || [];
+  const [missing, setMissing] = useState(null);
+  const [missingError, setMissingError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMissingGtiCourses(school.accreditationId, contactId)
+      .then((list) => { if (!cancelled) setMissing(list); })
+      .catch((err) => { if (!cancelled) setMissingError(err.message || 'Other available courses could not be loaded.'); });
+    return () => { cancelled = true; };
+  }, [school.accreditationId, contactId]);
+
   return (
     <>
       <div className="acc-legacy-intro">
@@ -96,56 +109,211 @@ function CoursesDetail({ school }) {
           </tbody>
         </table>
       )}
+
+      <div className="acc-select-heading">Other Available GTi Courses</div>
+      <div className="acc-legacy-intro">
+        You are not currently accredited to offer the following GTi courses. If you wish to enquire about adding any
+        of these courses to your account, please click the Course Enquiry Link.
+      </div>
+      {missingError && <div className="acc-warning" style={{ marginBottom: 14 }}>{missingError}</div>}
+      {missing === null && !missingError ? (
+        <div className="acc-step-sub">Loading…</div>
+      ) : missing && missing.length === 0 ? (
+        <div className="acc-step-sub">You're already accredited for every available GTi course.</div>
+      ) : missing && (
+        <table className="acc-legacy-table">
+          <thead>
+            <tr><th>Name</th><th>Practical Hours</th><th>Min Practical Fee</th><th>Enquire</th></tr>
+          </thead>
+          <tbody>
+            {missing.map((c) => (
+              <tr key={c.id}>
+                <td>{c.name}</td>
+                <td>–</td>
+                <td>–</td>
+                <td><span style={{ color: '#A5A0B5' }}>Add this course to my list</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </>
   );
 }
 
-function VenuesDetail({ school }) {
+function VenuesDetail({ school, contactId, onAddVenue }) {
+  const [venues, setVenues] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setVenues(null);
+    setError('');
+    fetchAccreditationVenues(school.accreditationId, contactId)
+      .then((list) => { if (!cancelled) setVenues(list); })
+      .catch((err) => { if (!cancelled) setError(err.message || 'Venues could not be loaded.'); });
+    return () => { cancelled = true; };
+  }, [school.accreditationId, contactId]);
+
+  // Falls back to the accreditation's own summary row if the venues list failed to load,
+  // so an error never regresses to showing nothing at all.
+  const rows = venues || [{
+    id: school.id, name: school.name, town: school.town, courseCount: school.courses,
+    tutors: school.tutors, shownOnBeautyguild: school.status === 'Active',
+  }];
+
   return (
     <>
       <div className="acc-legacy-intro">
         You have the following Guild Accredited Training Venues listed in the Training Directory.
       </div>
-      <table className="acc-legacy-table">
-        <thead>
-          <tr><th>Venue Name</th><th>Town</th><th>Courses</th><th>Tutors</th><th>Shown on Beautyguild</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>{school.name}</td>
-            <td>{school.town}</td>
-            <td>{school.courses}</td>
-            <td>{school.tutors}</td>
-            <td>Yes</td>
-          </tr>
-        </tbody>
-      </table>
+      {error && <div className="acc-warning" style={{ marginBottom: 14 }}>{error}</div>}
+      {venues === null && !error ? (
+        <div className="acc-step-sub">Loading…</div>
+      ) : (
+        <table className="acc-legacy-table">
+          <thead>
+            <tr><th>Venue Name</th><th>Town</th><th>Courses</th><th>Tutors</th><th>Shown on Beautyguild</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((v) => (
+              <tr key={v.id}>
+                <td>{v.name}</td>
+                <td>{v.town || '–'}</td>
+                <td>{v.courseCount ?? '–'}</td>
+                <td>{v.tutors ?? '–'}</td>
+                <td>{v.shownOnBeautyguild ? 'Yes' : 'No'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       <div className="acc-select-heading">Add Additional Training Venues</div>
       <div className="acc-legacy-intro">
         If you have additional training centres at venues that are not listed on Beautyguild.com, they will not be
         found by students who are searching in these locations. You can add additional venues to Beautyguild.com for
         just £50 + VAT per year.
       </div>
-      <div className="acc-legacy-intro" style={{ marginBottom: 0 }}>
-        Call our accreditation team on 01332 224830 to add additional Training Centres.
-      </div>
+      <button type="button" className="acc-btn-primary" onClick={onAddVenue}>+ Add Additional Venue</button>
     </>
   );
 }
 
-function TutorsDetail() {
+function TutorsTable({ rows }) {
+  return (
+    <table className="acc-legacy-table">
+      <thead>
+        <tr><th>Name</th><th>Guild Membership #</th><th>Membership Expiry</th></tr>
+      </thead>
+      <tbody>
+        {rows.map((t) => (
+          <tr key={t.id}><td>{t.name}</td><td>{t.membershipNumber}</td><td>{t.membershipExpiry ? formatLongDate(t.membershipExpiry) : '–'}</td></tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function InviteTutorModal({ onClose, onInvited }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [checking, setChecking] = useState(false);
+  const valid = name.trim() && /\S+@\S+\.\S+/.test(email);
+
+  const handleInvite = () => {
+    setChecking(true);
+    // UI only for now, per instruction - the real "is this email already a registered
+    // tutor" check gets wired in once the functionality is confirmed. Always proceeds
+    // as "not registered" until then.
+    const isAlreadyRegistered = false;
+    setChecking(false);
+    onInvited({ name: name.trim(), email: email.trim(), alreadyRegistered: isAlreadyRegistered });
+  };
+
+  return (
+    <div className="acc-modal-overlay" onClick={onClose}>
+      <div className="acc-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="acc-modal-title">Invite a Tutor</div>
+        <div className="acc-modal-body" style={{ marginBottom: 16 }}>
+          Enter the tutor's details below and we'll send them an invitation to join your training centre.
+        </div>
+        <div className="acc-field">
+          <label>Tutor Name</label>
+          <input className="acc-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Jane Smith" />
+        </div>
+        <div className="acc-field" style={{ marginBottom: 0 }}>
+          <label>Email Address</label>
+          <input className="acc-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@example.com" />
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <button type="button" className="acc-btn-primary" style={{ flex: 1 }} disabled={!valid || checking} onClick={handleInvite}>
+            {checking ? 'Checking…' : 'Invite'}
+          </button>
+          <button type="button" className="acc-btn-secondary" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TutorsDetail({ school, contactId }) {
+  const [tutors, setTutors] = useState(null);
+  const [error, setError] = useState('');
+  const [inviting, setInviting] = useState(false);
+  const [resultModal, setResultModal] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTutors(null);
+    setError('');
+    fetchAccreditationTutors(school.accreditationId, contactId)
+      .then((result) => { if (!cancelled) setTutors(result); })
+      .catch((err) => { if (!cancelled) setError(err.message || 'Tutors could not be loaded.'); })
+    return () => { cancelled = true; };
+  }, [school.accreditationId, contactId]);
+
+  const handleInvited = ({ name, email, alreadyRegistered }) => {
+    setInviting(false);
+    if (alreadyRegistered) {
+      setResultModal({
+        title: 'Tutor Already Registered',
+        body: `${name} (${email}) already has a Guild account. They can be added directly instead of being sent a new invitation.`,
+      });
+      return;
+    }
+    setResultModal({
+      title: 'Invitation Sent',
+      body: `An invitation has been sent to ${name} at ${email}.`,
+      saved: true,
+    });
+  };
+
   return (
     <>
-      <table className="acc-legacy-table">
-        <thead>
-          <tr><th>Name</th><th>Guild Membership #</th><th>Membership Expiry</th></tr>
-        </thead>
-        <tbody>
-          {ACCREDITED_LECTURERS.map((l) => (
-            <tr key={l.name}><td>{l.name}</td><td>{l.membershipNumber}</td><td>{l.membershipExpiry}</td></tr>
-          ))}
-        </tbody>
-      </table>
+      <button type="button" className="acc-btn-primary" style={{ marginBottom: 18 }} onClick={() => setInviting(true)}>+ Invite Tutor</button>
+      {inviting && <InviteTutorModal onClose={() => setInviting(false)} onInvited={handleInvited} />}
+      <Modal modal={resultModal} onClose={() => setResultModal(null)} />
+      {error && <div className="acc-warning" style={{ marginBottom: 14 }}>{error}</div>}
+      {tutors === null && !error ? (
+        <div className="acc-step-sub">Loading…</div>
+      ) : tutors && tutors.current.length === 0 ? (
+        <div className="acc-warning">
+          <div className="acc-warning-title">You do not have any accredited tutors registered against your training centres.</div>
+          <div className="acc-warning-body">Please contact us to add your tutors to your accreditation.</div>
+        </div>
+      ) : tutors && <TutorsTable rows={tutors.current} />}
+
+      {tutors && tutors.expired.length > 0 && (
+        <>
+          <div className="acc-select-heading">Expired Tutors</div>
+          <div className="acc-legacy-intro">
+            The following tutors have not renewed their annual membership and no longer allowed to teach Guild
+            Accredited training courses.
+          </div>
+          <TutorsTable rows={tutors.expired} />
+        </>
+      )}
+
       <div className="acc-legacy-intro" style={{ marginTop: 16, marginBottom: 0 }}>
         Lecturers and tutors of Guild Accredited training courses must be members of the Guild who are fully
         qualified in the subjects they are teaching and are suitably insured. Lecturers can apply online or call our
@@ -214,10 +382,22 @@ const DETAIL_COMPONENTS = {
   addCourse: PlaceholderDetail,
 };
 
-export default function ManageSchool({ school, initialOption, contactId }) {
+export default function ManageSchool({ school, initialOption, contactId, contact }) {
   const [activeOption, setActiveOption] = useState(initialOption || 'profile');
+  const [addingVenue, setAddingVenue] = useState(false);
 
   if (!school) return null;
+
+  if (addingVenue) {
+    return (
+      <AddVenueWizard
+        school={school}
+        contact={contact}
+        onCancel={() => setAddingVenue(false)}
+        onDone={() => setAddingVenue(false)}
+      />
+    );
+  }
 
   if (activeOption) {
     const DetailComponent = DETAIL_COMPONENTS[activeOption];
@@ -236,7 +416,11 @@ export default function ManageSchool({ school, initialOption, contactId }) {
         <div style={{ marginTop: 20, marginBottom: 20 }}>
           <TrainingCentreInfoBox school={school} />
         </div>
-        {activeOption === 'qualifications' ? <QualificationsDetail school={school} contactId={contactId} /> : <DetailComponent school={school} />}
+        {activeOption === 'qualifications' ? <QualificationsDetail school={school} contactId={contactId} />
+          : activeOption === 'venues' ? <VenuesDetail school={school} contactId={contactId} onAddVenue={() => setAddingVenue(true)} />
+          : activeOption === 'courses' ? <CoursesDetail school={school} contactId={contactId} />
+          : activeOption === 'tutors' ? <TutorsDetail school={school} contactId={contactId} />
+          : <DetailComponent school={school} />}
       </div>
     );
   }

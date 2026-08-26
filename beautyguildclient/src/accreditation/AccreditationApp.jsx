@@ -141,6 +141,10 @@ export default function AccreditationApp() {
   // than firing a single fetch that loses the race and looks like "not refreshing" to the user.
   const justSubmittedSchoolNameRef = useRef(null);
   const handledCatalystUserRef = useRef(null);
+  // Safety net for exactly one AccountStep mount right after an explicit logout: skips the
+  // "already authenticated?" check so we never silently log back in while signOut()'s
+  // redirect is still in flight - see the logout() comment below.
+  const justLoggedOutRef = useRef(false);
   // Where a brand-new registrant is within the Register mini-flow: the real production
   // journey is Email/Password -> Your Details+Interests -> Home Address -> Create Account,
   // not steps inside the Accreditation wizard itself.
@@ -174,21 +178,41 @@ export default function AccreditationApp() {
   // Stand-in for a real shared session with WordPress: if this browser already resolved an
   // identity earlier, don't force the login screen again. A real handoff would instead have
   // WordPress pass an authenticated identity to us directly - see enterWizardWithContact.
+  //
+  // The cached contact is re-verified against live CRM before being trusted, rather than used
+  // as-is - a contact that existed when the session was cached can later be deleted/merged in
+  // CRM, and blindly trusting a stale id here caused real submissions to fail with an
+  // unrecoverable "invalid Contact" error deep in accreditation/venue creation.
   useEffect(() => {
     const stored = loadSession();
-    if (!stored) return;
-    setLoggedInContact(stored);
-    setIsLoggedIn(true);
-    setScreen('portal');
-    resolveMembership(stored.id).then(setMembershipDecision).catch(() => {});
-    if (stored.id) {
-      fetchAccreditations(stored.id)
-        .then(applyDashboardData)
-        .catch((err) => {
-          console.log('accreditations lookup failed', err);
-          setAccreditationsError(err.message);
-        });
-    }
+    if (!stored || !stored.email) return;
+    setCheckingIdentity(true);
+    lookupContactByEmail(stored.email)
+      .then(({ exists, contact }) => {
+        if (!exists || !contact) {
+          console.log('cached session contact no longer exists in CRM, clearing stale session');
+          clearSession();
+          setCheckingIdentity(false);
+          return;
+        }
+        setLoggedInContact(contact);
+        saveSession(contact);
+        setIsLoggedIn(true);
+        setScreen('portal');
+        setCheckingIdentity(false);
+        resolveMembership(contact.id).then(setMembershipDecision).catch(() => {});
+        fetchAccreditations(contact.id)
+          .then(applyDashboardData)
+          .catch((err) => {
+            console.log('accreditations lookup failed', err);
+            setAccreditationsError(err.message);
+          });
+      })
+      .catch((err) => {
+        console.log('cached session verification failed, clearing stale session', err);
+        clearSession();
+        setCheckingIdentity(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -348,6 +372,13 @@ export default function AccreditationApp() {
   };
 
   const logout = () => {
+    // Per Catalyst's Web SDK docs, signOut() takes a required redirect URL and performs
+    // a real page navigation through Zoho's own logout endpoint - it does not return a
+    // promise. Calling it with no argument (as before) is why it never actually ended the
+    // identity session and briefly threw. Reset our own state first in case the redirect
+    // takes a moment, then hand off to Zoho to end the session and bring us back here.
+    justLoggedOutRef.current = true;
+    handledCatalystUserRef.current = null;
     clearSession();
     setIsLoggedIn(false);
     setLoggedInContact(null);
@@ -362,6 +393,9 @@ export default function AccreditationApp() {
     setStepIndex(0);
     setRegisterStage('account');
     setScreen('entry');
+    if (window.catalyst && window.catalyst.auth && typeof window.catalyst.auth.signOut === 'function') {
+      window.catalyst.auth.signOut(`${window.location.origin}/app/index.html`);
+    }
   };
 
   // "Having issues finding your address automatically? Click here to enter manually" -
@@ -755,6 +789,8 @@ export default function AccreditationApp() {
               <AccountStep
                 onAuthenticated={handleCatalystAuthenticated}
                 authError={identityError}
+                skipInitialAuthCheck={justLoggedOutRef.current}
+                onAuthCheckSkipped={() => { justLoggedOutRef.current = false; }}
               />
             </div>
           </div>
@@ -797,7 +833,7 @@ export default function AccreditationApp() {
             <span className="acc-topbar-title">Manage school</span>
             <button type="button" className="acc-back-btn" onClick={goEntry}>← Back to Accreditation</button>
           </div>
-          <ManageSchool school={selectedSchool} initialOption={manageInitialOption} contactId={loggedInContact?.id} />
+          <ManageSchool school={selectedSchool} initialOption={manageInitialOption} contactId={loggedInContact?.id} contact={loggedInContact} />
         </>
       );
     }

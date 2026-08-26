@@ -4,6 +4,12 @@ const catalyst = require('zcatalyst-sdk-node');
 const app = express();
 app.use(express.json());
 
+
+
+
+
+
+
 const CRM_API_DOMAIN = process.env.CRM_API_DOMAIN || 'https://www.zohoapis.eu';
 const CRM_CONNECTION_NAME = process.env.CRM_CONNECTION_NAME || 'zohocrm';
 const MEMBERSHIP_MODULE = 'Membership';
@@ -310,10 +316,13 @@ app.post('/payments/checkout', async (req, res) => {
 			return res.status(502).json({ error: 'Stripe checkout creation failed', details: body });
 		}
 		try {
-			await crmUpdate(crmHeaders, 'Training_Centre_Accred', accreditationId, {
-				Stripe_Checkout_Session_ID: body.id,
-				Stripe_Payment_Link: body.url,
-			});
+			// Stripe's hosted checkout URLs carry a long fragment token and can exceed the CRM
+			// field's 450-char cap. Skip the link rather than let that fail the whole update -
+			// otherwise Stripe_Checkout_Session_ID (used to avoid recreating duplicate sessions)
+			// never gets saved either, since both fields are written in one PUT.
+			const crmFields = { Stripe_Checkout_Session_ID: body.id };
+			if (body.url && body.url.length <= 450) crmFields.Stripe_Payment_Link = body.url;
+			await crmUpdate(crmHeaders, 'Training_Centre_Accred', accreditationId, crmFields);
 		} catch (crmErr) {
 			console.log('Stripe session CRM update failed', crmErr && crmErr.details ? crmErr.details : crmErr);
 		}
@@ -359,30 +368,53 @@ app.get('/accreditations', async (req, res) => {
 		const { data: accData } = await accRes.json();
 		const accreditations = accData || [];
 
-		// Training Centre name/town live on a separate module, joined here via the shared Account.
-		const accountIds = [...new Set(accreditations.map((a) => a.Account && a.Account.id).filter(Boolean))];
-		const centreByAccountId = {};
-		if (accountIds.length) {
-			const criteria = accountIds.map((id) => `(Account:equals:${id})`).join('or');
+		// Training Centre name/town live on a separate module. An accreditation can have more
+		// than one Training_Centres record now that Additional Venues exist, so the main one
+		// must be resolved explicitly via Accreditation_Centre_Link's Centre_Relationship_Type,
+		// not just "any centre sharing this Account" - that broke as soon as a second venue existed.
+		const accIdsForLinks = accreditations.map((a) => a.id);
+		const mainCentreIdByAccId = {};
+		if (accIdsForLinks.length) {
+			const linkCriteria = accIdsForLinks.map((id) => `(Accreditation:equals:${id})`).join('or');
+			const linksRes = await fetch(
+				`${CRM_API_DOMAIN}/crm/v3/Accreditation_Centre_Link/search?criteria=((${linkCriteria})and(Centre_Relationship_Type:equals:Main Centre))&fields=Accreditation,Training_Centre,Centre_Relationship_Type`,
+				{ headers }
+			);
+			if (linksRes.status !== 204) {
+				if (linksRes.ok) {
+					const { data: linkData } = await linksRes.json();
+					for (const l of (linkData || [])) {
+						const accId = l.Accreditation && l.Accreditation.id;
+						const centreId = l.Training_Centre && l.Training_Centre.id;
+						if (accId && centreId) mainCentreIdByAccId[accId] = centreId;
+					}
+				} else {
+					console.log('CRM accreditation centre links search failed', linksRes.status, await linksRes.text());
+				}
+			}
+		}
+		const mainCentreIds = [...new Set(Object.values(mainCentreIdByAccId))];
+		const centreById = {};
+		if (mainCentreIds.length) {
+			const criteria = mainCentreIds.map((id) => `(id:equals:${id})`).join('or');
 			const centresRes = await fetch(
 				`${CRM_API_DOMAIN}/crm/v3/Training_Centres/search?criteria=(${criteria})&fields=${TRAINING_CENTRE_FIELDS.join(',')}`,
 				{ headers }
 			);
 			if (centresRes.ok) {
 				const { data: centreData } = await centresRes.json();
-				for (const c of (centreData || [])) {
-					const accountId = c.Account && c.Account.id;
-					// A school can have additional venues; the first one found stands in as the main centre.
-					if (accountId && !centreByAccountId[accountId]) centreByAccountId[accountId] = c;
-				}
+				for (const c of (centreData || [])) centreById[c.id] = c;
 			} else {
 				console.log('CRM training centres search failed', centresRes.status, await centresRes.text());
 			}
 		}
 
 		// Which courses were applied for lives on TC_Course_Offering, one row per course, linked back via Accreditation.
+		// An accreditation can have several venues each offering the same course, so this is
+		// deduped per accreditation - otherwise "Accredited Courses" would show one row per
+		// venue-course pairing instead of one row per distinct course the school offers.
 		const accIds = accreditations.map((a) => a.id);
-		const courseIdsByAccId = {};
+		const courseIdSetByAccId = {};
 		const allCourseIds = new Set();
 		if (accIds.length) {
 			const criteria = accIds.map((id) => `(Accreditation:equals:${id})`).join('or');
@@ -397,7 +429,7 @@ app.get('/accreditations', async (req, res) => {
 						const accId = o.Accreditation && o.Accreditation.id;
 						const courseId = o.Course && o.Course.id;
 						if (!accId || !courseId) continue;
-						(courseIdsByAccId[accId] = courseIdsByAccId[accId] || []).push(courseId);
+						(courseIdSetByAccId[accId] = courseIdSetByAccId[accId] || new Set()).add(courseId);
 						allCourseIds.add(courseId);
 					}
 				} else {
@@ -405,6 +437,8 @@ app.get('/accreditations', async (req, res) => {
 				}
 			}
 		}
+		const courseIdsByAccId = {};
+		for (const [accId, idSet] of Object.entries(courseIdSetByAccId)) courseIdsByAccId[accId] = [...idSet];
 
 		// Duration/CPD Points live on Courses itself, not on the offering - a second batch fetch,
 		// same join pattern as Training Centres above.
@@ -425,7 +459,7 @@ app.get('/accreditations', async (req, res) => {
 
 		const result = accreditations.map((a) => {
 			const accountId = a.Account && a.Account.id;
-			const centre = centreByAccountId[accountId];
+			const centre = centreById[mainCentreIdByAccId[a.id]];
 			const courseIds = courseIdsByAccId[a.id] || [];
 			const courseDetails = courseIds.map((id) => courseById[id]).filter(Boolean).map((c) => ({
 				name: c.Name,
@@ -619,7 +653,10 @@ function draftAccreditationRecord(payload, stage = 'Draft') {
 async function saveDraftCourses(headers, payload, accreditationId, centreId, linkId, validFrom, validTo) {
 	if (!payload.courseIds || !payload.courseIds.length) return;
 	const idCriteria = payload.courseIds.map((id) => `(Course:equals:${id})`).join('or');
-	const existingRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/TC_Course_Offering/search?criteria=((Accreditation:equals:${accreditationId})and(${idCriteria}))&fields=Course`, { headers });
+	// Scoped by Training_Centre too, not just Accreditation - an accreditation with more than
+	// one venue can otherwise see a sibling venue's existing offerings and wrongly skip creating
+	// its own, since Course/Accreditation alone would already look "covered".
+	const existingRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/TC_Course_Offering/search?criteria=((Accreditation:equals:${accreditationId})and(Training_Centre:equals:${centreId})and(${idCriteria}))&fields=Course`, { headers });
 	const existing = existingRes.ok && existingRes.status !== 204 ? ((await existingRes.json()).data || []) : [];
 	const existingIds = new Set(existing.map((row) => row.Course && row.Course.id).filter(Boolean));
 	for (const courseId of payload.courseIds) {
@@ -690,6 +727,174 @@ app.get('/accreditations/:id', async (req, res) => {
 	} catch (err) {
 		console.log('draft fetch error', err);
 		res.status(502).json({ error: 'Draft fetch failed' });
+	}
+});
+
+// Lists every Training Centre linked to an accreditation - the main centre plus any
+// Additional Venues - each with its own course count. The "Accredited Venues" table
+// used to just repeat the accreditation's own summary row, which only ever showed one
+// venue; this is what actually powers a real multi-row list.
+app.get('/accreditations/:id/venues', async (req, res) => {
+	const { id } = req.params;
+	const contactId = req.query.contactId;
+	if (!id || !contactId) return res.status(400).json({ error: 'id and contactId are required' });
+	try {
+		const catalystApp = catalyst.initialize(req);
+		const { headers } = await catalystApp.connections().getConnectionCredentials(CRM_CONNECTION_NAME);
+
+		const accRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Training_Centre_Accred/${id}?fields=Applicant_Contact,Number_of_Tutors`, { headers });
+		if (!accRes.ok) return res.status(404).json({ error: 'Accreditation not found' });
+		const accBody = await accRes.json();
+		const accRecord = accBody.data && accBody.data[0];
+		if (!accRecord || accRecord.Applicant_Contact && accRecord.Applicant_Contact.id !== contactId) return res.status(404).json({ error: 'Accreditation not found' });
+
+		const linksRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Accreditation_Centre_Link/search?criteria=(Accreditation:equals:${id})&fields=Training_Centre,Centre_Relationship_Type`, { headers });
+		const links = linksRes.status !== 204 && linksRes.ok ? ((await linksRes.json()).data || []) : [];
+		const centreIds = [...new Set(links.map((l) => l.Training_Centre && l.Training_Centre.id).filter(Boolean))];
+		if (!centreIds.length) return res.json({ venues: [] });
+
+		const relationshipByCentreId = {};
+		for (const l of links) {
+			const centreId = l.Training_Centre && l.Training_Centre.id;
+			if (centreId) relationshipByCentreId[centreId] = l.Centre_Relationship_Type;
+		}
+
+		const centresCriteria = centreIds.map((cid) => `(id:equals:${cid})`).join('or');
+		const centresRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Training_Centres/search?criteria=(${centresCriteria})&fields=${TRAINING_CENTRE_FIELDS.join(',')}`, { headers });
+		const centres = centresRes.status !== 204 && centresRes.ok ? ((await centresRes.json()).data || []) : [];
+
+		const offeringsRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/TC_Course_Offering/search?criteria=(Accreditation:equals:${id})&fields=Course,Training_Centre`, { headers });
+		const offerings = offeringsRes.status !== 204 && offeringsRes.ok ? ((await offeringsRes.json()).data || []) : [];
+		const courseCountByCentreId = {};
+		for (const o of offerings) {
+			const centreId = o.Training_Centre && o.Training_Centre.id;
+			if (centreId) courseCountByCentreId[centreId] = (courseCountByCentreId[centreId] || 0) + 1;
+		}
+
+		const venues = centres.map((c) => ({
+			id: c.id,
+			name: c.Name,
+			town: c.Town || null,
+			isMain: relationshipByCentreId[c.id] === 'Main Centre',
+			courseCount: courseCountByCentreId[c.id] || 0,
+			tutors: accRecord.Number_of_Tutors ?? null,
+			shownOnBeautyguild: c.Centre_Status === 'Verified',
+		})).sort((a, b) => (b.isMain ? 1 : 0) - (a.isMain ? 1 : 0));
+
+		res.json({ venues });
+	} catch (err) {
+		console.log('venues list error', err);
+		res.status(502).json({ error: 'Venues lookup failed' });
+	}
+});
+
+// GTi courses this school isn't currently accredited to offer at any of its venues -
+// the "Other Available GTi Courses" table from the school portal document. Practical
+// Hours and Min Practical Fee aren't modelled anywhere in CRM yet (checked both Courses
+// and TC_Course_Offering), so those columns are left for the client to render as
+// placeholders rather than guessed at here.
+app.get('/accreditations/:id/missing-gti-courses', async (req, res) => {
+	const { id } = req.params;
+	const contactId = req.query.contactId;
+	if (!id || !contactId) return res.status(400).json({ error: 'id and contactId are required' });
+	try {
+		const catalystApp = catalyst.initialize(req);
+		const { headers } = await catalystApp.connections().getConnectionCredentials(CRM_CONNECTION_NAME);
+
+		const accRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Training_Centre_Accred/${id}?fields=Applicant_Contact`, { headers });
+		if (!accRes.ok) return res.status(404).json({ error: 'Accreditation not found' });
+		const accBody = await accRes.json();
+		const accRecord = accBody.data && accBody.data[0];
+		if (!accRecord || accRecord.Applicant_Contact && accRecord.Applicant_Contact.id !== contactId) return res.status(404).json({ error: 'Accreditation not found' });
+
+		const offeredRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/TC_Course_Offering/search?criteria=(Accreditation:equals:${id})&fields=Course`, { headers });
+		const offered = offeredRes.status !== 204 && offeredRes.ok ? ((await offeredRes.json()).data || []) : [];
+		const offeredIds = new Set(offered.map((o) => o.Course && o.Course.id).filter(Boolean));
+
+		const gtiRes = await fetch(
+			`${CRM_API_DOMAIN}/crm/v3/Courses/search?criteria=((Status:equals:Active)and(Course_Type:equals:GTI))&fields=${COURSE_FIELDS.join(',')}`,
+			{ headers }
+		);
+		const gtiCourses = gtiRes.status !== 204 && gtiRes.ok ? ((await gtiRes.json()).data || []) : [];
+
+		const missing = gtiCourses
+			.filter((c) => !offeredIds.has(c.id))
+			.map((c) => ({ id: c.id, name: c.Name, duration: c.Duration || null, cpdPoints: c.CPD_Points ?? null }));
+
+		res.json({ courses: missing });
+	} catch (err) {
+		console.log('missing GTi courses error', err);
+		res.status(502).json({ error: 'Missing courses lookup failed' });
+	}
+});
+
+// Accredited tutors for a school - split into current (Membership.Current_Membership_Status =
+// "Current") and expired ("Expired"), matching the two tables in the school portal document.
+// Only Active Tutor_Relationships are considered - Inactive means the tutor no longer works
+// at this school at all, not just that their membership lapsed.
+app.get('/accreditations/:id/tutors', async (req, res) => {
+	const { id } = req.params;
+	const contactId = req.query.contactId;
+	if (!id || !contactId) return res.status(400).json({ error: 'id and contactId are required' });
+	try {
+		const catalystApp = catalyst.initialize(req);
+		const { headers } = await catalystApp.connections().getConnectionCredentials(CRM_CONNECTION_NAME);
+
+		const accRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Training_Centre_Accred/${id}?fields=Applicant_Contact,Account`, { headers });
+		if (!accRes.ok) return res.status(404).json({ error: 'Accreditation not found' });
+		const accBody = await accRes.json();
+		const accRecord = accBody.data && accBody.data[0];
+		if (!accRecord || accRecord.Applicant_Contact && accRecord.Applicant_Contact.id !== contactId) return res.status(404).json({ error: 'Accreditation not found' });
+		const accountId = accRecord.Account && accRecord.Account.id;
+		if (!accountId) return res.json({ current: [], expired: [] });
+
+		const relRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Tutor_Relationships/search?criteria=((Account:equals:${accountId})and(Status:equals:Active))&fields=Tutor_Contact,Tutor_Relationship`, { headers });
+		const relations = relRes.status !== 204 && relRes.ok ? ((await relRes.json()).data || []) : [];
+		// Tutor_Relationship on this record is actually a Deal (the membership transaction),
+		// not the Membership profile itself - Deal.Member_Profile is the real link to Membership,
+		// confirmed against the live connection rather than assumed from the field's display label.
+		const dealIds = [...new Set(relations.map((r) => r.Tutor_Relationship && r.Tutor_Relationship.id).filter(Boolean))];
+
+		const memberProfileIdByDealId = {};
+		if (dealIds.length) {
+			const criteria = dealIds.map((did) => `(id:equals:${did})`).join('or');
+			const dealsRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Deals/search?criteria=(${criteria})&fields=Member_Profile`, { headers });
+			const deals = dealsRes.status !== 204 && dealsRes.ok ? ((await dealsRes.json()).data || []) : [];
+			for (const d of deals) {
+				const memberProfileId = d.Member_Profile && d.Member_Profile.id;
+				if (memberProfileId) memberProfileIdByDealId[d.id] = memberProfileId;
+			}
+		}
+
+		const membershipById = {};
+		const membershipIds = [...new Set(Object.values(memberProfileIdByDealId))];
+		if (membershipIds.length) {
+			const criteria = membershipIds.map((mid) => `(id:equals:${mid})`).join('or');
+			const memRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Membership/search?criteria=(${criteria})&fields=Name,Current_Membership_Expiry,Current_Membership_Status`, { headers });
+			const memberships = memRes.status !== 204 && memRes.ok ? ((await memRes.json()).data || []) : [];
+			for (const m of memberships) membershipById[m.id] = m;
+		}
+
+		const current = [];
+		const expired = [];
+		for (const r of relations) {
+			const contact = r.Tutor_Contact;
+			const dealId = r.Tutor_Relationship && r.Tutor_Relationship.id;
+			const membership = dealId && membershipById[memberProfileIdByDealId[dealId]];
+			if (!contact || !membership) continue;
+			const row = {
+				id: r.id,
+				name: contact.name,
+				membershipNumber: membership.Name,
+				membershipExpiry: membership.Current_Membership_Expiry || null,
+			};
+			(membership.Current_Membership_Status === 'Expired' ? expired : current).push(row);
+		}
+
+		res.json({ current, expired });
+	} catch (err) {
+		console.log('tutors list error', err);
+		res.status(502).json({ error: 'Tutors lookup failed' });
 	}
 });
 
@@ -888,6 +1093,117 @@ app.post('/accreditations/submit', async (req, res) => {
 			debug: { name: err.name, message: err.message, details: err.details, stack: err.stack },
 			request: { contactId, accreditationId: accreditationId || null, accountId: existingAccountId || null, centreId: existingCentreId || null, linkId: existingLinkId || null, schoolName: school.name, courseCount: Array.isArray(courseIds) ? courseIds.length : 0 },
 		});
+	}
+});
+
+// Adds an Additional Venue to an existing, already-accredited school. Reuses the same
+// Account and Training_Centre_Accred as the main centre - only a new Training_Centres
+// record and its own Accreditation_Centre_Link (Centre_Relationship_Type: "Additional
+// Centre", confirmed against the real picklist rather than guessed "Additional Venue")
+// get created here, plus TC_Course_Offering rows for whatever courses this venue offers.
+app.post('/venues', async (req, res) => {
+	const { contactId, accountId, accreditationId, school, courseIds } = req.body || {};
+	if (!contactId || !accountId || !accreditationId || !school || !school.name) {
+		return res.status(400).json({ error: 'contactId, accountId, accreditationId and school.name are required' });
+	}
+
+	try {
+		const catalystApp = catalyst.initialize(req);
+		const { headers } = await catalystApp.connections().getConnectionCredentials(CRM_CONNECTION_NAME);
+
+		const centreId = await crmCreate(headers, 'Training_Centres', {
+			Name: school.name,
+			Account: accountId,
+			Contact: contactId,
+			Email: school.email || undefined,
+			Phone_Number: school.phone || undefined,
+			Mobile_Phone_Number: school.mobile || undefined,
+			Address_Line_1: school.addressLine1 || undefined,
+			Town: school.town || undefined,
+			County: school.county || undefined,
+			Country: school.country || undefined,
+			Latitude: school.latitude != null ? String(school.latitude) : undefined,
+			Longitude: school.longitude != null ? String(school.longitude) : undefined,
+			Centre_Status: 'Unverified',
+		});
+
+		const today = new Date().toISOString().slice(0, 10);
+		// Additional venues expire alongside the main accreditation, not a fresh year from today.
+		const accredRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Training_Centre_Accred/${accreditationId}?fields=Valid_To`, { headers });
+		const accredBody = accredRes.ok ? await accredRes.json() : null;
+		const validTo = (accredBody && accredBody.data && accredBody.data[0] && accredBody.data[0].Valid_To) || addYears(today, 1);
+
+		const linkId = await crmCreate(headers, 'Accreditation_Centre_Link', {
+			Name: `${school.name} - Additional Centre`,
+			Accreditation: accreditationId,
+			Training_Centre: centreId,
+			Centre_Relationship_Type: 'Additional Centre',
+			Start_Date: today,
+			End_Date: validTo,
+		});
+
+		// Additional venues don't ask the applicant to re-pick courses or re-answer the tutor
+		// questions - they offer the same courses as the school's MAIN centre specifically, and
+		// tutor info already lives once on the shared Training_Centre_Accred, not per venue. If
+		// the caller doesn't pass courseIds explicitly, copy the main centre's current offerings -
+		// resolved via the Main Centre link, not "any offering under this accreditation", which
+		// would wrongly pull in other additional venues' courses too once more than one exists.
+		let venueCourseIds = courseIds;
+		if (!venueCourseIds || !venueCourseIds.length) {
+			const mainLinkRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Accreditation_Centre_Link/search?criteria=((Accreditation:equals:${accreditationId})and(Centre_Relationship_Type:equals:Main Centre))&fields=Training_Centre`, { headers });
+			const mainLinkData = mainLinkRes.status !== 204 && mainLinkRes.ok ? ((await mainLinkRes.json()).data || []) : [];
+			const mainCentreId = mainLinkData[0] && mainLinkData[0].Training_Centre && mainLinkData[0].Training_Centre.id;
+			if (mainCentreId) {
+				const existingRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/TC_Course_Offering/search?criteria=((Accreditation:equals:${accreditationId})and(Training_Centre:equals:${mainCentreId}))&fields=Course`, { headers });
+				const existing = existingRes.status !== 204 && existingRes.ok ? ((await existingRes.json()).data || []) : [];
+				venueCourseIds = [...new Set(existing.map((row) => row.Course && row.Course.id).filter(Boolean))];
+			} else {
+				venueCourseIds = [];
+			}
+		}
+		await saveDraftCourses(headers, { courseIds: venueCourseIds, school }, accreditationId, centreId, linkId, today, validTo);
+
+		res.json({ venue: { id: centreId, linkId, accreditationId, name: school.name } });
+	} catch (err) {
+		console.log('venue create error', err, err.details && JSON.stringify(err.details));
+		res.status(502).json({ error: 'Venue creation failed', details: err.details || err.message });
+	}
+});
+
+app.post('/payments/venue-checkout', async (req, res) => {
+	const { centreId, accreditationId, contactId, email, name } = req.body || {};
+	if (!centreId || !accreditationId || !contactId || !email) {
+		return res.status(400).json({ error: 'centreId, accreditationId, contactId and email are required' });
+	}
+	const venuePrice = process.env.STRIPE_PRICE_ADDITIONAL_VENUE;
+	if (!process.env.STRIPE_SECRET_KEY || !venuePrice) {
+		return res.status(503).json({ error: 'Stripe checkout is not configured for additional venues' });
+	}
+	try {
+		const params = new URLSearchParams();
+		params.set('mode', 'payment');
+		params.set('success_url', process.env.STRIPE_SUCCESS_URL || `${req.protocol}://${req.get('host')}/app/index.html?payment=success`);
+		params.set('cancel_url', process.env.STRIPE_CANCEL_URL || `${req.protocol}://${req.get('host')}/app/index.html?payment=cancelled`);
+		params.set('customer_email', email);
+		params.set('line_items[0][price]', venuePrice);
+		params.set('line_items[0][quantity]', '1');
+		const metadata = {
+			type: 'additional_venue', centre_id: centreId, accreditation_id: accreditationId,
+			contact_id: contactId, email, name: name || '', status: 'pending',
+		};
+		for (const [key, value] of Object.entries(metadata)) params.set(`metadata[${key}]`, String(value));
+		const stripeRes = await fetch(`${STRIPE_API_BASE_URL}/checkout/sessions`, {
+			method: 'POST', headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: params,
+		});
+		const body = await stripeRes.json();
+		if (!stripeRes.ok) {
+			console.log('Stripe venue checkout creation failed', stripeRes.status, body);
+			return res.status(502).json({ error: 'Stripe checkout creation failed', details: body });
+		}
+		res.json({ checkoutUrl: body.url, sessionId: body.id });
+	} catch (err) {
+		console.log('Venue checkout error', err);
+		res.status(502).json({ error: 'Stripe checkout unavailable', details: err.message });
 	}
 });
 

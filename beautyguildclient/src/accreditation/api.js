@@ -84,6 +84,31 @@ export async function fetchAccreditationDraft(id, contactId) {
   return body;
 }
 
+// Every Training Centre linked to an accreditation - the main centre plus any
+// Additional Venues - each with its own course count.
+export async function fetchAccreditationVenues(id, contactId) {
+  const res = await fetch(`${API_BASE_URL}/accreditations/${encodeURIComponent(id)}/venues?contactId=${encodeURIComponent(contactId)}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `venues lookup failed: ${res.status}`);
+  return body.venues || [];
+}
+
+// GTi courses this school isn't currently accredited to offer at any venue.
+export async function fetchMissingGtiCourses(id, contactId) {
+  const res = await fetch(`${API_BASE_URL}/accreditations/${encodeURIComponent(id)}/missing-gti-courses?contactId=${encodeURIComponent(contactId)}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `missing courses lookup failed: ${res.status}`);
+  return body.courses || [];
+}
+
+// Accredited tutors for a school, split into current and expired membership.
+export async function fetchAccreditationTutors(id, contactId) {
+  const res = await fetch(`${API_BASE_URL}/accreditations/${encodeURIComponent(id)}/tutors?contactId=${encodeURIComponent(contactId)}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `tutors lookup failed: ${res.status}`);
+  return { current: body.current || [], expired: body.expired || [] };
+}
+
 // Training Centre Accreditation records for the logged-in contact, split into
 // accredited schools and pending applications by Accreditation Status.
 export async function fetchAccreditations(contactId) {
@@ -155,6 +180,31 @@ export async function geocodeAddress(country, location) {
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || `geocode failed: ${res.status}`);
   return body.coordinates;
+}
+
+// Adds an Additional Venue to an already-accredited school: new Training_Centres record
+// plus its own Accreditation_Centre_Link and course offerings, reusing the existing Account
+// and Training_Centre_Accred rather than starting a fresh accreditation.
+export async function createVenue(payload) {
+  const res = await fetchWithTimeout(`${API_BASE_URL}/venues`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(JSON.stringify({ httpStatus: res.status, ...body }, null, 2));
+  }
+  return body.venue;
+}
+
+export async function createVenueCheckoutSession(payload) {
+  const res = await fetchWithTimeout(`${API_BASE_URL}/payments/venue-checkout`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(JSON.stringify({ httpStatus: res.status, ...body }, null, 2));
+  }
+  return body;
 }
 
 export async function createCheckoutSession(payload) {

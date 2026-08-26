@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 // Catalyst renders the complete email/password, signup and password-reset UI in
 // this element. The SDK owns credentials and the browser session; this app only
 // receives the authenticated user and then resolves the matching CRM Contact.
-export default function AccountStep({ onAuthenticated, authError }) {
+export default function AccountStep({ onAuthenticated, authError, skipInitialAuthCheck, onAuthCheckSkipped }) {
   const [mode, setMode] = useState('login');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -20,7 +20,21 @@ export default function AccountStep({ onAuthenticated, authError }) {
     if (mode !== 'login' || !window.catalyst || !window.catalyst.auth) return undefined;
 
     let stopped = false;
+    const showLoginForm = () => {
+      window.catalyst.auth.signIn('loginDivElementId', {
+        service_url: 'https://beautyguild-20117268527.development.catalystserverless.eu/app/index.html',
+      });
+      setSessionChecked(true);
+    };
     const checkSession = async () => {
+      // Right after an explicit logout, Zoho's own identity session can still report as
+      // authenticated (signOut() doesn't reliably end it) - skip trusting that just this once
+      // so a logout actually shows the login form instead of silently signing back in.
+      if (skipInitialAuthCheck) {
+        if (onAuthCheckSkipped) onAuthCheckSkipped();
+        if (!stopped) showLoginForm();
+        return;
+      }
       try {
         const response = await window.catalyst.auth.isUserAuthenticated();
         if (stopped) return;
@@ -29,23 +43,19 @@ export default function AccountStep({ onAuthenticated, authError }) {
             authenticationHandled.current = true;
             onAuthenticatedRef.current(response.content);
           }
+          setSessionChecked(true);
           return;
         }
       } catch (error) {
         // No active session: render the Catalyst login iframe below.
       }
-      if (!stopped) {
-        window.catalyst.auth.signIn('loginDivElementId', {
-          service_url: 'https://beautyguild-20117268527.development.catalystserverless.eu/app/index.html',
-        });
-        setSessionChecked(true);
-      }
+      if (!stopped) showLoginForm();
     };
     checkSession();
     return () => {
       stopped = true;
     };
-  }, [mode]);
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const register = async (event) => {
     event.preventDefault();
