@@ -25,10 +25,11 @@ export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSc
         <button
           type="button"
           onClick={copyCorrToSch}
-          style={{ background: '#fff', color: '#0B5FFF', border: '1.5px solid #DCD9E8', padding: '9px 16px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', borderRadius: 9, marginBottom: 18 }}
+          className="acc-copy-address"
         >
           Use home address
         </button>
+        <div className="copy-address-note">Copies your correspondence address into the training centre fields. You can edit it afterwards.</div>
 
         <div className="acc-field">
           <label>Country</label>
@@ -41,15 +42,15 @@ export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSc
           <input className="acc-input" value={sch.contact} onChange={(e) => setSchField('contact', e.target.value)} />
         </div>
         <div className="acc-field" style={{ marginBottom: acc.schLooked ? 16 : 0 }}>
-          <label>School Name</label>
+          <label>School Name *</label>
           <input className="acc-input" value={sch.name} onChange={(e) => setSchField('name', e.target.value)} placeholder="e.g. Tega Beauty Academy" />
         </div>
 
         {!acc.schLooked && (
           <>
-            <div style={{ fontSize: 13, color: '#4A4760', margin: '18px 0 12px' }}>
-              Please select a country before using the postcode search facility. To use the postcode search, enter your postcode below and click search.{' '}
-              <span style={{ color: '#E00879', fontWeight: 600, cursor: 'pointer' }} onClick={onManualEntry}>Click here</span> to enter your address manually.
+            <div className="address-lookup-intro">
+              <span>Enter the training centre postcode to find its address.</span>
+              <button type="button" className="text-action" onClick={onManualEntry}>Enter address manually</button>
             </div>
             <div className="acc-field" style={{ marginBottom: 0 }}>
               <label>Postcode</label>

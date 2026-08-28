@@ -34,22 +34,20 @@ export default function LoqateAddressLookup({ value, onChange, onSelect, disable
   };
 
   return (
-    <div>
-      <div style={{ display: 'flex', gap: 9 }}>
-        <input className="acc-input" style={{ flex: 1, textTransform: 'uppercase' }} value={value}
+    <div className="loqate-lookup">
+      <div className="loqate-search-row">
+        <input className="acc-input" value={value}
           onChange={(e) => { onChange(e.target.value); setItems([]); setError(''); }}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } }}
           placeholder="DE23 6AF" disabled={disabled} />
-        <button type="button" onClick={search} disabled={disabled || loading || !value.trim()}
-          style={{ background: '#16131F', color: '#fff', border: 'none', padding: '0 18px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', borderRadius: 10, whiteSpace: 'nowrap' }}>
+        <button type="button" className="loqate-search-button" onClick={search} disabled={disabled || loading || !value.trim()}>
           {loading ? 'Searching…' : 'Find address'}
         </button>
       </div>
-      {error && <div style={{ color: '#A33A57', fontSize: 12.5, marginTop: 9 }}>{error}</div>}
-      {items.length > 0 && <div style={{ marginTop: 9, border: '1px solid #DCD9E8', borderRadius: 9, overflow: 'hidden', background: '#fff' }}>
-        {items.map((item) => <button key={item.Id} type="button" onClick={() => select(item)}
-          style={{ display: 'block', width: '100%', textAlign: 'left', border: 0, borderBottom: '1px solid #EEEAF4', background: '#fff', padding: '11px 13px', color: '#28243A', cursor: 'pointer', fontSize: 13 }}>
-          <strong>{item.Text || item.Description}</strong>{item.Description && item.Text && <span style={{ color: '#8A8598' }}> — {item.Description}</span>}
+      {error && <div className="loqate-error" role="alert">{error}</div>}
+      {items.length > 0 && <div className="loqate-results" role="listbox" aria-label="Address results">
+        {items.map((item) => <button key={item.Id} type="button" role="option" aria-selected="false" onClick={() => select(item)}>
+          <strong>{item.Text || item.Description}</strong>{item.Description && item.Text && <span>{item.Description}</span>}
         </button>)}
       </div>}
     </div>

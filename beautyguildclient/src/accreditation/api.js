@@ -63,7 +63,9 @@ export async function submitAccreditation(payload) {
   });
   const body = await res.json();
   if (!res.ok) {
-    throw new Error(JSON.stringify({ httpStatus: res.status, ...body }, null, 2));
+    const error = new Error(JSON.stringify({ httpStatus: res.status, ...body }, null, 2));
+    error.payload = body;
+    throw error;
   }
   return body.accreditation;
 }
@@ -140,7 +142,7 @@ export async function createQualification(payload) {
   });
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || `qualification save failed: ${res.status}`);
-  return body.qualification;
+  return body;
 }
 
 // Resolves the CRM Member Profile used by the future accreditation Deal and
@@ -164,21 +166,21 @@ export async function findAddresses(text, container) {
   if (container) params.set('container', container);
   const res = await fetch(`${API_BASE_URL}/address/find?${params}`);
   const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `address search failed: ${res.status}`);
+  if (!res.ok) throw new Error([body.error || `address search failed: ${res.status}`, typeof body.details === 'string' ? body.details : body.details && JSON.stringify(body.details)].filter(Boolean).join(': '));
   return body.items || [];
 }
 
 export async function retrieveAddress(id) {
   const res = await fetch(`${API_BASE_URL}/address/retrieve?id=${encodeURIComponent(id)}`);
   const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `address retrieve failed: ${res.status}`);
+  if (!res.ok) throw new Error([body.error || `address retrieve failed: ${res.status}`, typeof body.details === 'string' ? body.details : body.details && JSON.stringify(body.details)].filter(Boolean).join(': '));
   return body.address;
 }
 
 export async function geocodeAddress(country, location) {
   const res = await fetch(`${API_BASE_URL}/address/geocode?country=${encodeURIComponent(country || 'GBR')}&location=${encodeURIComponent(location)}`);
   const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `geocode failed: ${res.status}`);
+  if (!res.ok) throw new Error([body.error || `geocode failed: ${res.status}`, typeof body.details === 'string' ? body.details : body.details && JSON.stringify(body.details)].filter(Boolean).join(': '));
   return body.coordinates;
 }
 

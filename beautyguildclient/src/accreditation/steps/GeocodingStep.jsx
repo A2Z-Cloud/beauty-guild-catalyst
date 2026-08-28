@@ -9,9 +9,18 @@ export default function GeocodingStep({ acc, setSchField }) {
   const addressLine = [sch.l1, sch.town, sch.county, sch.pc, sch.country].filter(Boolean).join(', ');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
+  const resetToAddress = () => {
+    setError('');
+    setSchField('latitude', null);
+    setSchField('longitude', null);
+    setRetryKey((value) => value + 1);
+  };
 
   useEffect(() => {
-    if (!addressLine || sch.latitude || sch.longitude) return undefined;
+    const hasCoordinates = sch.latitude !== null && sch.latitude !== '' && sch.longitude !== null && sch.longitude !== ''
+      && Number.isFinite(Number(sch.latitude)) && Number.isFinite(Number(sch.longitude));
+    if (!addressLine || hasCoordinates) return undefined;
     let cancelled = false;
     setLoading(true);
     geocodeAddress(sch.country === 'United Kingdom' ? 'GBR' : sch.country, addressLine)
@@ -24,25 +33,21 @@ export default function GeocodingStep({ acc, setSchField }) {
       .catch((err) => { if (!cancelled) setError(err.message || 'We could not geocode this address.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [addressLine, sch.country, sch.latitude, sch.longitude, setSchField]);
+  }, [addressLine, sch.country, sch.latitude, sch.longitude, setSchField, retryKey]);
 
   return (
     <>
       <div>
-        <div className="acc-step-heading">Geocoding</div>
-        <div className="acc-step-sub">
-          Please confirm the training centre location and drag/drop the marker to adjust.<br />
-          Click the next button below to save your changes.<br />
-          Click the back button below to change your school's address.
-        </div>
-        <div style={{ fontSize: 12, color: '#A5A0B5', marginTop: 6 }}>Please do not click the back button on your browser.</div>
-        {loading && <div style={{ fontSize: 13, color: '#8A8598', marginTop: 10 }}>Locating this address…</div>}
-        {error && <div style={{ fontSize: 13, color: '#A33A57', marginTop: 10 }}>{error}</div>}
+        <div className="acc-step-heading">Confirm centre location</div>
+        <div className="acc-step-sub">This map shows the approximate location for the address you've entered.</div>
+        {loading && <div className="geocode-loading"><span className="acc-spinner" /> Locating this address…</div>}
+        {error && <div className="geocode-error" role="alert"><span>{error}</span><button type="button" className="acc-btn-secondary" onClick={() => { setError(''); setRetryKey((value) => value + 1); }}>Try location again</button></div>}
       </div>
+      <div className="geocode-address-bar"><div><span>Selected address</span><strong>{addressLine || 'No address supplied'}</strong></div><button type="button" className="text-action" disabled={loading} onClick={resetToAddress}>Re-centre map</button></div>
       <div className="acc-card" style={{ padding: 0, overflow: 'hidden' }}>
         <MapPicker latitude={sch.latitude} longitude={sch.longitude} onChange={({ latitude, longitude }) => { setSchField('latitude', latitude); setSchField('longitude', longitude); }} />
       </div>
-      <div style={{ fontSize: 12, color: '#8A8598', marginTop: 8 }}>Drag the marker to fine-tune the location. The map position is used for this application only; CRM receives the address fields.</div>
+      <div className="geocode-help">This map is for your reference only and is not saved with your application.</div>
     </>
   );
 }

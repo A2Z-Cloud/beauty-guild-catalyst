@@ -8,6 +8,7 @@ functions/beauty_guild_api/.env
 node_modules/
 beautyguildclient/build/
 coverage/
+.build/
 
 # Local/system files
 .DS_Store

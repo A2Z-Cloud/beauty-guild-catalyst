@@ -60,8 +60,9 @@ export default function AddressStep({ acc, setAddrField, setAccField }) {
         )}
       </div>
       {!acc.addrLooked && (
-        <div style={{ fontSize: 13, color: '#8A8598', lineHeight: 1.55 }}>
-          Enter your postcode and select <strong>Find address</strong> to continue. Select a result to populate the fields, or enter the address manually below.
+        <div className="address-manual-row">
+          <span>Can't find the address?</span>
+          <button type="button" className="text-action" onClick={() => setAccField('addrLooked', true)}>Enter address manually</button>
         </div>
       )}
     </>

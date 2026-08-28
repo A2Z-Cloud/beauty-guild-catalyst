@@ -9,7 +9,7 @@ const VENUE_STEP_LABELS = ['Venue details', 'Geocoding', 'Summary'];
 
 const f2 = (n) => `£${n.toFixed(2)}`;
 
-function initialVenueState(contact) {
+function initialVenueState(contact, school) {
   return {
     title: (contact && contact.title) || '',
     fname: (contact && contact.firstName) || '',
@@ -17,7 +17,7 @@ function initialVenueState(contact) {
     schLooked: false,
     tob: false,
     sch: {
-      name: '', contact: '',
+      name: (school && school.name) || '', contact: '',
       email: (contact && contact.email) || '',
       phone: (contact && contact.phone) || '',
       mobile: (contact && contact.mobile) || '',
@@ -95,7 +95,7 @@ function VenueSummaryStep({ acc, setAccField, school, onPay, submitting, error }
 // an additional venue offers the same courses as the main centre and shares the same
 // Training_Centre_Accred record, so there's nothing venue-specific to ask there.
 export default function AddVenueWizard({ school, contact, onCancel, onDone }) {
-  const [acc, setAcc] = useState(() => initialVenueState(contact));
+  const [acc, setAcc] = useState(() => initialVenueState(contact, school));
   const [stepIndex, setStepIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -148,8 +148,8 @@ export default function AddVenueWizard({ school, contact, onCancel, onDone }) {
         accreditationId: school.accreditationId,
         school: {
           name: acc.sch.name, email: acc.sch.email, phone: acc.sch.phone, mobile: acc.sch.mobile,
-          addressLine1: acc.sch.l1, town: acc.sch.town, county: acc.sch.county, country: acc.sch.country,
-          latitude: acc.sch.latitude, longitude: acc.sch.longitude,
+          addressLine1: acc.sch.l1, addressLine2: acc.sch.l2, addressLine3: acc.sch.l3,
+          town: acc.sch.town, county: acc.sch.county, country: acc.sch.country, postcode: acc.sch.pc,
         },
       });
       const checkout = await createVenueCheckoutSession({
@@ -175,20 +175,19 @@ export default function AddVenueWizard({ school, contact, onCancel, onDone }) {
 
   return (
     <>
-      <div className="acc-topbar">
-        <span className="acc-topbar-title">Add Additional Venue — {school.name}</span>
-        <button type="button" className="acc-back-btn" onClick={goBack}>← Back</button>
-      </div>
-      <StepProgress current={stepIndex} labels={VENUE_STEP_LABELS} />
-      <div className="acc-body">
-        <div className="acc-main-col">
+      <StepProgress current={stepIndex} labels={VENUE_STEP_LABELS} title="Add additional venue" context={school.name} />
+      <div className="acc-body acc-wizard-body">
+        <div className="acc-main-col acc-wizard-content" key={stepIndex}>
           {steps[stepIndex]}
         </div>
       </div>
       {!isLastStep && (
         <div className="acc-footer">
           <button type="button" className="acc-back-btn" onClick={goBack}>← Back</button>
-          <button type="button" className="acc-btn-primary" disabled={!nextEnabled} onClick={goNext}>Continue →</button>
+          <div className="acc-footer-right">
+            {!nextEnabled && <span className="acc-footer-guidance">Complete the required fields to continue.</span>}
+            <button type="button" className="acc-btn-primary" disabled={!nextEnabled} onClick={goNext}>Continue →</button>
+          </div>
         </div>
       )}
       {isLastStep && (

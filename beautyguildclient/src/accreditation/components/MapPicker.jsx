@@ -16,19 +16,20 @@ L.Icon.Default.mergeOptions({
 
 const DEFAULT_POSITION = [52.8, -1.6];
 
-export default function MapPicker({ latitude, longitude, onChange }) {
+export default function MapPicker({ latitude, longitude, onChange, draggable = true }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return undefined;
-    const hasPosition = Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
+    const hasPosition = latitude !== null && latitude !== '' && longitude !== null && longitude !== ''
+      && Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude));
     const position = hasPosition ? [Number(latitude), Number(longitude)] : DEFAULT_POSITION;
     const map = L.map(containerRef.current).setView(position, hasPosition ? 16 : 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
-    const marker = L.marker(position, { draggable: true }).addTo(map);
-    marker.on('dragend', () => { const next = marker.getLatLng(); onChange({ latitude: next.lat, longitude: next.lng }); });
+    const marker = L.marker(position, { draggable }).addTo(map);
+    if (draggable) marker.on('dragend', () => { const next = marker.getLatLng(); onChange?.({ latitude: next.lat, longitude: next.lng }); });
     mapRef.current = map; markerRef.current = marker;
     const invalidate = () => map.invalidateSize();
     setTimeout(invalidate, 0);
@@ -43,9 +44,9 @@ export default function MapPicker({ latitude, longitude, onChange }) {
 
   useEffect(() => {
     const lat = Number(latitude); const lng = Number(longitude);
-    if (!mapRef.current || !markerRef.current || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    if (!mapRef.current || !markerRef.current || latitude === null || latitude === '' || longitude === null || longitude === '' || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
     const next = [lat, lng]; markerRef.current.setLatLng(next); mapRef.current.setView(next, Math.max(mapRef.current.getZoom(), 15));
   }, [latitude, longitude]);
 
-  return <div ref={containerRef} style={{ height: 340, width: '100%' }} aria-label="Draggable training centre map" />;
+  return <div ref={containerRef} className="training-centre-map" aria-label={draggable ? 'Draggable training centre map' : 'Training centre location map'} />;
 }

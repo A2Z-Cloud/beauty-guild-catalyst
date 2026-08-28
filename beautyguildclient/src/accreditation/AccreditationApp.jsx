@@ -20,20 +20,13 @@ import TutorsVenuesStep from './steps/TutorsVenuesStep';
 import SummaryStep from './steps/SummaryStep';
 import {
   initialAccState, isStepValid, mergeInterestsWithTraining, withDialCode, parseDialCode,
-  ACCREDITATION_FEE, ACCREDITATION_VAT, ACCREDITATION_GRAND_TOTAL,
+  ACCREDITATION_FEE, ACCREDITATION_VAT, ACCREDITATION_GRAND_TOTAL, ACCREDITATION_WITH_MEMBERSHIP, formatUkDate,
 } from './data';
 import { loadDrafts, upsertDraft, deleteDraft } from './drafts';
 import { loadSession, saveSession, clearSession } from './session';
 import { fetchActiveCourses, lookupContactByEmail, fetchAccreditations, fetchAccreditationDraft, saveAccreditationDraft, createContact, submitAccreditation, resolveMembership, createCheckoutSession } from './api';
 
 const STEP_NEXT_LABEL = { 8: 'Review and pay →' };
-
-// CRM "2025-06-04" -> "04/06/2025", the dd/mm/yyyy shape the rest of the UI expects.
-function isoToUkDate(iso) {
-  if (!iso) return '';
-  const [y, m, d] = iso.split('-');
-  return `${d}/${m}/${y}`;
-}
 
 function toSchoolCard(a) {
   return {
@@ -44,12 +37,12 @@ function toSchoolCard(a) {
     name: a.schoolName || 'Unnamed training centre',
     town: a.town || '',
     level: a.level || '',
-    expires: isoToUkDate(a.validTo),
+    expires: formatUkDate(a.validTo),
     courses: a.courseCount ?? '–',
     courseList: a.courseDetails || [],
     tutors: a.tutors ?? '–',
     daysLeft: a.daysToRenewal ?? '–',
-    status: a.status === 'Verified' ? 'Active' : (a.status || 'Unknown'),
+    status: a.status === 'Verified' ? 'Accredited' : a.status === 'Closed' ? 'Not currently accredited' : (a.status || 'Status unavailable'),
     qualificationCount: a.qualificationCount || 0,
     qualificationsComplete: a.qualificationsComplete === true,
   };
@@ -82,20 +75,15 @@ function toDraftItem(a) {
 }
 
 function PortalDashboard({ contact, membership, onAccreditation, onNavigate }) {
-  const firstName = contact?.firstName || 'Member';
   return (
     <>
-      <div className="acc-topbar">
-        <span className="acc-topbar-title">Dashboard</span>
-        <span className="acc-topbar-welcome">Welcome back, {firstName}</span>
-      </div>
       <div className="acc-body portal-dashboard" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%' }}>
         <div className="portal-hero">
           <div><div className="portal-eyebrow">BEAUTY GUILD MEMBER PORTAL</div><h1>Your portal at a glance</h1><p>Manage your membership, courses, accreditation and future insurance services in one place.</p></div>
           <button type="button" className="acc-btn-primary" onClick={onAccreditation}>Open accreditation →</button>
         </div>
         <div className="portal-card-grid">
-          <button type="button" className="portal-card" onClick={() => onNavigate('Membership')}><span className="portal-card-kicker">MEMBERSHIP</span><strong>{membership?.membershipStatus === 'active' ? `${membership.membershipType || 'Guild'} membership` : 'Membership'}</strong><span>{membership?.membershipStatus === 'active' ? `Valid until ${membership.membershipExpiry || 'recorded date'}` : 'View your membership status'}</span></button>
+          <button type="button" className="portal-card" onClick={() => onNavigate('Membership')}><span className="portal-card-kicker">MEMBERSHIP</span><strong>{membership?.membershipStatus === 'active' ? `${membership.membershipType || 'Guild'} membership` : 'Membership'}</strong><span>{membership?.membershipStatus === 'active' ? `Valid until ${formatUkDate(membership.membershipExpiry) || 'recorded date'}` : 'View your membership status'}</span></button>
           <button type="button" className="portal-card" onClick={() => onNavigate('GTi courses')}><span className="portal-card-kicker">LEARNING</span><strong>GTi courses</strong><span>Browse available courses</span></button>
           <button type="button" className="portal-card" onClick={onAccreditation}><span className="portal-card-kicker">ACCREDITATION</span><strong>Training centres</strong><span>View applications and accredited schools</span></button>
           <button type="button" className="portal-card" onClick={() => onNavigate('Insurance')}><span className="portal-card-kicker">COMING SOON</span><strong>Insurance</strong><span>Insurance services will be available here</span></button>
@@ -106,7 +94,40 @@ function PortalDashboard({ contact, membership, onAccreditation, onNavigate }) {
 }
 
 function PortalPlaceholder({ title }) {
-  return <><div className="acc-topbar"><span className="acc-topbar-title">{title}</span></div><div className="acc-body" style={{ flexDirection: 'column', alignItems: 'stretch' }}><div className="portal-placeholder"><div className="portal-eyebrow">BEAUTY GUILD PORTAL</div><h1>{title}</h1><p>This area is being prepared for the next portal phase.</p></div></div></>;
+  return <div className="acc-body" style={{ flexDirection: 'column', alignItems: 'stretch' }}><div className="portal-placeholder"><div className="portal-eyebrow">BEAUTY GUILD PORTAL</div><h1>{title}</h1><p>This area is being prepared for the next portal phase.</p></div></div>;
+}
+
+function MembershipPage({ membership, membershipError, onRetry, onAccreditation }) {
+  if (!membership) return <>
+    <div className="acc-body portal-section-page">
+      <div className="portal-section-heading"><span className="portal-eyebrow">YOUR MEMBERSHIP</span><h1>Membership details</h1></div>
+      {membershipError
+        ? <div className="acc-warning"><div className="acc-warning-title">We couldn't load your membership</div><div className="acc-warning-body">{membershipError}</div><button type="button" className="acc-btn-secondary" onClick={onRetry}>Try again</button></div>
+        : <div className="portal-loading"><span className="acc-spinner" /> Checking your membership…</div>}
+    </div>
+  </>;
+  const active = membership?.membershipStatus === 'active';
+  return <>
+    <div className="acc-body portal-section-page">
+      <div className="portal-section-heading"><span className="portal-eyebrow">YOUR MEMBERSHIP</span><h1>Membership details</h1></div>
+      <section className="membership-page-panel">
+        <div>
+          <span className={`acc-status-badge${active ? '' : ' warning'}`}>{active ? 'Current' : 'No current membership'}</span>
+          <h2>{active ? `${membership.membershipType || 'Guild'} membership` : 'Associate membership'}</h2>
+          <p>{active
+            ? `Your membership is current${membership.membershipExpiry ? ` until ${formatUkDate(membership.membershipExpiry)}` : ''}.`
+            : 'No current membership was found. Associate Membership will be included when required for a new accreditation.'}</p>
+        </div>
+        <dl className="membership-detail-list">
+          <div><dt>Membership type</dt><dd>{active ? (membership.membershipType || 'Guild membership') : 'Not currently active'}</dd></div>
+          <div><dt>Status</dt><dd>{active ? 'Current' : 'Not current'}</dd></div>
+          <div><dt>Expiry date</dt><dd>{active ? (formatUkDate(membership.membershipExpiry) || 'Not recorded') : '—'}</dd></div>
+        </dl>
+      </section>
+      {!active && <div className="acc-info-note">Starting an accreditation will show the membership-inclusive price before you pay.</div>}
+      <button type="button" className="acc-btn-primary membership-page-action" onClick={onAccreditation}>View accreditation options →</button>
+    </div>
+  </>;
 }
 
 export default function AccreditationApp() {
@@ -153,6 +174,8 @@ export default function AccreditationApp() {
   const [submittingAccred, setSubmittingAccred] = useState(false);
   const [membershipDecision, setMembershipDecision] = useState(null);
   const [checkingMembership, setCheckingMembership] = useState(false);
+  const [membershipError, setMembershipError] = useState('');
+  const [payingApplicationId, setPayingApplicationId] = useState(null);
   // Which WordPress link brought the visitor here - set via ?intent=apply on the URL.
   // 'apply' (the "Apply Accreditation" link) goes straight into the wizard once identified;
   // anything else ('login', or no param) is the plain "Login" link, which lands on the dashboard.
@@ -200,7 +223,8 @@ export default function AccreditationApp() {
         setIsLoggedIn(true);
         setScreen('portal');
         setCheckingIdentity(false);
-        resolveMembership(contact.id).then(setMembershipDecision).catch(() => {});
+        setMembershipError('');
+        resolveMembership(contact.id).then(setMembershipDecision).catch((err) => setMembershipError(err.message || 'Membership details could not be loaded.'));
         fetchAccreditations(contact.id)
           .then(applyDashboardData)
           .catch((err) => {
@@ -257,7 +281,12 @@ export default function AccreditationApp() {
     },
   }));
 
-  const onOtChange = (v) => setAcc((prev) => ({ ...prev, ot: v, tutQual: v === 'no' ? null : prev.tutQual }));
+  const onOtChange = (v) => setAcc((prev) => ({
+    ...prev,
+    ot: v,
+    tutQual: v === 'no' ? null : prev.tutQual,
+    otN: v === 'no' ? '' : prev.otN,
+  }));
 
   const saveQuote = async () => {
     if (!loggedInContact?.id) {
@@ -345,6 +374,7 @@ export default function AccreditationApp() {
   const enterWizardWithContact = (contact) => {
     const fresh = initialAccState();
     setMembershipDecision(null);
+    setMembershipError('');
     if (contact) {
       fresh.email = contact.email || '';
       if (contact.title) fresh.title = contact.title;
@@ -383,6 +413,7 @@ export default function AccreditationApp() {
     setIsLoggedIn(false);
     setLoggedInContact(null);
     setMembershipDecision(null);
+    setIdentityError(null);
     setAcc(initialAccState());
     setAccreditedSchools([]);
     setPendingApplications([]);
@@ -574,7 +605,8 @@ export default function AccreditationApp() {
           setCheckingIdentity(false);
           setIsLoggedIn(true);
           setScreen('portal');
-          resolveMembership(createdContact.id).then(setMembershipDecision).catch(() => {});
+          setMembershipError('');
+          resolveMembership(createdContact.id).then(setMembershipDecision).catch((err) => setMembershipError(err.message || 'Membership details could not be loaded.'));
           return;
         } catch (err) {
           console.log('automatic CRM contact creation failed', err);
@@ -598,7 +630,8 @@ export default function AccreditationApp() {
     setCheckingIdentity(false);
     setIsLoggedIn(true);
     setScreen('portal');
-    resolveMembership(resolvedContact.id).then(setMembershipDecision).catch(() => {});
+    setMembershipError('');
+    resolveMembership(resolvedContact.id).then(setMembershipDecision).catch((err) => setMembershipError(err.message || 'Membership details could not be loaded.'));
     // The "Apply Accreditation" link should land directly in the wizard, not the dashboard.
   };
 
@@ -634,9 +667,12 @@ export default function AccreditationApp() {
           phone: acc.sch.phone,
           mobile: acc.sch.mobile,
           addressLine1: acc.sch.l1,
+          addressLine2: acc.sch.l2,
+          addressLine3: acc.sch.l3,
           town: acc.sch.town,
           county: acc.sch.county,
           country: acc.sch.country,
+          postcode: acc.sch.pc,
         },
         declarations: acc.decls.map((v) => v === 'yes'),
         otherTutors: acc.ot === 'yes',
@@ -647,7 +683,7 @@ export default function AccreditationApp() {
         termsAccepted: acc.tob,
         accreditationFee: ACCREDITATION_FEE,
         vatAmount: ACCREDITATION_VAT,
-        totalQuoted: ACCREDITATION_GRAND_TOTAL,
+        totalQuoted: membershipDecision?.membershipRequired ? ACCREDITATION_WITH_MEMBERSHIP : ACCREDITATION_GRAND_TOTAL,
       });
       // Keep the CRM record identity before starting Stripe. If checkout fails or
       // the user retries, the next submission updates this record instead of creating
@@ -658,6 +694,11 @@ export default function AccreditationApp() {
       }
     } catch (err) {
       console.log('accreditation CRM submission failed', err);
+      const partial = err.payload?.partial;
+      if (partial?.accreditationId) setActiveDraftId(partial.accreditationId);
+      if (partial?.accountId || partial?.centreId || partial?.linkId) {
+        setActiveDraftRefs({ accountId: partial.accountId || null, centreId: partial.centreId || null, linkId: partial.linkId || null });
+      }
       setModal({ title: "Couldn't save accreditation", body: err.message || 'The accreditation could not be saved to CRM.' });
       setSubmittingAccred(false);
       return;
@@ -674,24 +715,20 @@ export default function AccreditationApp() {
       if (checkout.alreadyPaid) {
         setModal({ title: 'Payment already received', body: 'This application has already been paid. The Guild will confirm it shortly.' });
         setScreen('done');
+        setSubmittingAccred(false);
         return;
       }
+      if (!checkout.checkoutUrl) throw new Error('Stripe did not return a checkout link. Your application is saved and you can retry payment from Accreditation.');
       if (activeDraftId) {
         setDrafts(deleteDraft(activeDraftId));
         setActiveDraftId(null);
       }
       justSubmittedSchoolNameRef.current = acc.sch.name;
-      if (checkout.checkoutUrl) {
-        window.location.assign(checkout.checkoutUrl);
-        return;
-      }
-      // goEntry() (wired to the "done" screen's dashboard button) refreshes accreditations
-      // itself, polling until this submission shows up, so it appears without a manual reload.
-      setScreen('done');
+      window.location.assign(checkout.checkoutUrl);
+      return;
     } catch (err) {
       console.log('Stripe checkout failed', err);
       setModal({ title: "Couldn't start payment", body: `Your application was saved in CRM, but Stripe checkout could not be opened.\n\n${err.message || 'Please try Pay Now again.'}` });
-    } finally {
       setSubmittingAccred(false);
     }
   };
@@ -700,9 +737,10 @@ export default function AccreditationApp() {
     if (stepIndex !== 9 || !loggedInContact?.id || membershipDecision || checkingMembership) return undefined;
     let cancelled = false;
     setCheckingMembership(true);
+    setMembershipError('');
     resolveMembership(loggedInContact.id)
       .then((decision) => { if (!cancelled) setMembershipDecision(decision); })
-      .catch((err) => { if (!cancelled) setModal({ title: "Couldn't check membership", body: err.message || 'We could not confirm your membership pricing.' }); })
+      .catch((err) => { if (!cancelled) setMembershipError(err.message || 'We could not confirm your membership pricing.'); })
       .finally(() => { if (!cancelled) setCheckingMembership(false); });
     return () => { cancelled = true; };
     // checkingMembership is intentionally excluded: changing it here would cancel
@@ -710,8 +748,22 @@ export default function AccreditationApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepIndex, loggedInContact, membershipDecision]);
 
+  const retryMembershipCheck = async () => {
+    if (!loggedInContact?.id || checkingMembership) return;
+    setCheckingMembership(true);
+    setMembershipError('');
+    try {
+      setMembershipDecision(await resolveMembership(loggedInContact.id));
+    } catch (err) {
+      setMembershipError(err.message || 'We could not confirm your membership pricing.');
+    } finally {
+      setCheckingMembership(false);
+    }
+  };
+
   const payExistingApplication = async (application) => {
-    if (!loggedInContact || !application.id) return;
+    if (!loggedInContact || !application.id || payingApplicationId) return;
+    setPayingApplicationId(application.id);
     try {
       const checkout = await createCheckoutSession({
         accreditationId: application.id,
@@ -723,17 +775,21 @@ export default function AccreditationApp() {
       if (checkout.alreadyPaid) {
         setModal({ title: 'Payment already received', body: 'This application has already been paid. Your application will remain available while the Guild confirms it.' });
         goEntry();
+        setPayingApplicationId(null);
         return;
       }
-      if (checkout.checkoutUrl) window.location.assign(checkout.checkoutUrl);
+      if (!checkout.checkoutUrl) throw new Error('Stripe did not return a checkout link. Please try again.');
+      window.location.assign(checkout.checkoutUrl);
     } catch (err) {
       setModal({ title: "Couldn't start payment", body: err.message || 'Something went wrong. Please try again.' });
+      setPayingApplicationId(null);
     }
   };
 
   const renderMain = () => {
     if (isLoggedIn && screen === 'portal') return <PortalDashboard contact={loggedInContact} membership={membershipDecision} onAccreditation={goEntry} onNavigate={setScreen} />;
-    if (isLoggedIn && ['Membership', 'GTi courses', 'Insurance', 'My profile', 'Documents'].includes(screen)) return <PortalPlaceholder title={screen} />;
+    if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} />;
+    if (isLoggedIn && ['GTi courses', 'Insurance', 'My profile', 'Documents'].includes(screen)) return <PortalPlaceholder title={screen} />;
     if (!isLoggedIn && screen === 'entry') {
       // Register stages 2+ (Your Details, Home Address) - the pink banner persists, but the
       // rest of the screen is register-specific, not the Login/Register tab card.
@@ -749,9 +805,6 @@ export default function AccreditationApp() {
 
         return (
           <>
-            <div className="acc-topbar">
-              <span className="acc-topbar-title">Accreditation</span>
-            </div>
             <div className="acc-body" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%' }}>
               <div className="acc-main-col">
                 <div style={{ textAlign: 'center' }}>
@@ -781,9 +834,6 @@ export default function AccreditationApp() {
       // Register stage 1 (Email/Password) and the whole Login flow share this screen.
       return (
         <>
-          <div className="acc-topbar">
-            <span className="acc-topbar-title">Accreditation</span>
-          </div>
           <div className="acc-body" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%' }}>
             <div className="acc-main-col">
               <AccountStep
@@ -791,6 +841,7 @@ export default function AccreditationApp() {
                 authError={identityError}
                 skipInitialAuthCheck={justLoggedOutRef.current}
                 onAuthCheckSkipped={() => { justLoggedOutRef.current = false; }}
+                onResetAuth={logout}
               />
             </div>
           </div>
@@ -801,8 +852,7 @@ export default function AccreditationApp() {
     if (screen === 'entry') {
       return (
         <>
-          <div className="acc-topbar">
-            <span className="acc-topbar-title">Accreditation</span>
+          <div className="acc-topbar acc-topbar-actions">
             <button type="button" className="acc-btn-primary" onClick={startApplyExisting}>
               Apply for new accreditation →
             </button>
@@ -817,6 +867,7 @@ export default function AccreditationApp() {
             pendingApplications={pendingApplications}
             awaitingPaymentApplications={awaitingPaymentApplications}
             onPayExistingApplication={payExistingApplication}
+            payingApplicationId={payingApplicationId}
             onStartNew={startApplyExisting}
             membership={membershipDecision}
             accreditationsError={accreditationsError}
@@ -827,15 +878,7 @@ export default function AccreditationApp() {
     }
 
     if (screen === 'manage') {
-      return (
-        <>
-          <div className="acc-topbar">
-            <span className="acc-topbar-title">Manage school</span>
-            <button type="button" className="acc-back-btn" onClick={goEntry}>← Back to Accreditation</button>
-          </div>
-          <ManageSchool school={selectedSchool} initialOption={manageInitialOption} contactId={loggedInContact?.id} contact={loggedInContact} />
-        </>
-      );
+      return <ManageSchool school={selectedSchool} initialOption={manageInitialOption} contactId={loggedInContact?.id} contact={loggedInContact} onBack={goEntry} />;
     }
 
     if (screen === 'done') {
@@ -861,18 +904,14 @@ export default function AccreditationApp() {
       <SchoolStep acc={acc} setSchField={setSchField} setAccField={setAccField} copyCorrToSch={copyCorrToSch} onManualEntry={enterSchoolManually} />,
       <GeocodingStep acc={acc} setSchField={setSchField} />,
       <TutorsVenuesStep acc={acc} setAccField={setAccField} onOtChange={onOtChange} />,
-      <SummaryStep acc={acc} setAccField={setAccField} onPay={finishAccred} onSave={saveQuote} courses={courses} submitting={submittingAccred} checkingMembership={checkingMembership} membershipRequired={membershipDecision?.membershipRequired} />,
+      <SummaryStep acc={acc} setAccField={setAccField} onPay={finishAccred} onSave={saveQuote} courses={courses} submitting={submittingAccred} checkingMembership={checkingMembership} membershipRequired={membershipDecision?.membershipRequired} membershipError={membershipError} onRetryMembership={retryMembershipCheck} />,
     ];
 
     return (
       <>
-        <div className="acc-topbar">
-          <span className="acc-topbar-title">Accreditation</span>
-          <button type="button" className="acc-back-btn" onClick={goBack}>← {backLabel}</button>
-        </div>
-        <StepProgress current={stepIndex} />
-        <div className="acc-body">
-          <div className="acc-main-col">
+        <StepProgress current={stepIndex} context={acc.sch.name || 'Training centre application'} />
+        <div className="acc-body acc-wizard-body">
+          <div className="acc-main-col acc-wizard-content" key={stepIndex}>
             {steps[stepIndex]}
           </div>
         </div>
@@ -880,6 +919,7 @@ export default function AccreditationApp() {
           <div className="acc-footer">
             <button type="button" className="acc-back-btn" onClick={goBack}>← {backLabel}</button>
             <div className="acc-footer-right">
+              {!nextEnabled && <span className="acc-footer-guidance">Complete the required fields to continue.</span>}
               {stepIndex >= 5 && <button type="button" className="acc-btn-secondary" onClick={saveQuote}>Save &amp; finish later</button>}
               <button type="button" className="acc-btn-primary" disabled={!nextEnabled} onClick={goNext}>{nextLabel}</button>
             </div>
@@ -905,7 +945,11 @@ export default function AccreditationApp() {
             onDashboard={() => setScreen('portal')}
             onAccreditation={goEntry}
             onSection={(label) => setScreen(label === 'Dashboard' ? 'portal' : label)}
-            activeItem={screen === 'portal' ? 'Dashboard' : screen === 'insurance' ? 'Insurance' : 'Accreditation'}
+            activeItem={screen === 'portal'
+              ? 'Dashboard'
+              : ['entry', 'wizard', 'manage', 'done'].includes(screen)
+                ? 'Accreditation'
+                : screen}
           />
         )}
         <div className="acc-main">

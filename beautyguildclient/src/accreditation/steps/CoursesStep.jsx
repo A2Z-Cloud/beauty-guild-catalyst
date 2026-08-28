@@ -28,17 +28,14 @@ export default function CoursesStep({ acc, toggleCourse, courses, coursesError }
   const setAllGroups = (open) => setOpenGroups(Object.fromEntries(groups.map((group) => [group.title, open])));
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+      <div className="acc-course-heading">
         <div>
-          <div className="acc-step-heading">Select Your Courses</div>
+          <div className="acc-step-heading">Available accreditation courses</div>
           <div className="acc-step-sub" style={{ maxWidth: 620 }}>
-            <p style={{ margin: '0 0 10px' }}>GTi courses are available for most popular beauty, nails, hair and holistic treatments.</p>
-            <p style={{ margin: '0 0 10px' }}>The theory for all GTi courses is delivered and assessed online, leaving you to concentrate all your time on teaching the practical techniques required to carry out the treatment.</p>
-            <p style={{ margin: '0 0 10px' }}>You can opt to teach as many different GTi courses as you like, providing you have declared that you hold the relevant qualifications for each treatment.</p>
-            <p style={{ margin: 0 }}>Tick the GTi courses you wish to offer.</p>
+            Choose the active GTi courses you want this training centre to offer. Courses are grouped by treatment group for easier browsing.
           </div>
         </div>
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#E00879', background: '#FFF0F7', padding: '7px 14px', borderRadius: 20, whiteSpace: 'nowrap' }}>
+        <span className="acc-selection-count">
           {acc.courses.length} selected
         </span>
       </div>
@@ -62,11 +59,11 @@ export default function CoursesStep({ acc, toggleCourse, courses, coursesError }
         </div>
       </div>}
 
-      {courses && groups.map((grp) => {
+      {courses && <div className="acc-course-browser">{groups.map((grp) => {
         const count = grp.items.filter((c) => acc.courses.includes(c.id)).length;
         const isOpen = openGroups[grp.title] === true || (openGroups[grp.title] === undefined && (count > 0 || groups.length === 1));
         return (
-          <div className="acc-card" key={grp.title}>
+          <section className="acc-card acc-course-group" key={grp.title}>
             <button type="button" className="acc-course-group-header acc-course-group-toggle" onClick={() => toggleGroup(grp.title)} aria-expanded={isOpen}>
               <div className="acc-course-group-title">{grp.title}</div>
               <span className="acc-course-group-right">{count > 0 && <span className="acc-course-group-count">{count} selected</span>}<span aria-hidden="true">{isOpen ? '−' : '+'}</span></span>
@@ -81,7 +78,7 @@ export default function CoursesStep({ acc, toggleCourse, courses, coursesError }
                   <label
                     key={c.id}
                     className={`acc-course-chip${selected ? ' selected' : ''}`}
-                    onClick={() => toggleCourse(c.id)}
+                    onClick={(event) => { event.preventDefault(); toggleCourse(c.id); }}
                     style={{ alignItems: 'flex-start', flexDirection: 'column', gap: 4 }}
                   >
                     <span style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
@@ -93,9 +90,9 @@ export default function CoursesStep({ acc, toggleCourse, courses, coursesError }
                 );
               })}
             </div>}
-          </div>
+          </section>
         );
-      })}
+      })}</div>}
     </>
   );
 }

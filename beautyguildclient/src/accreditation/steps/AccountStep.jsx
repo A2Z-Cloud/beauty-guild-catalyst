@@ -1,9 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-// Catalyst renders the complete email/password, signup and password-reset UI in
-// this element. The SDK owns credentials and the browser session; this app only
-// receives the authenticated user and then resolves the matching CRM Contact.
-export default function AccountStep({ onAuthenticated, authError, skipInitialAuthCheck, onAuthCheckSkipped }) {
+function responseMessage(response) {
+  return response?.message || response?.content?.message || response?.content?.data?.message || response?.data?.message || '';
+}
+
+function friendlyRegistrationError(error) {
+  const message = responseMessage(error) || error?.message || '';
+  if (/already|exist|duplicate|registered/i.test(message)) {
+    return 'An account already exists for this email address. Please log in or use Forgot password.';
+  }
+  return message || 'We could not start registration. Please try again.';
+}
+
+export default function AccountStep({ onAuthenticated, authError, skipInitialAuthCheck, onAuthCheckSkipped, onResetAuth }) {
   const [mode, setMode] = useState('login');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -11,25 +20,34 @@ export default function AccountStep({ onAuthenticated, authError, skipInitialAut
   const [registering, setRegistering] = useState(false);
   const [registrationMessage, setRegistrationMessage] = useState('');
   const [registrationError, setRegistrationError] = useState('');
-  const onAuthenticatedRef = useRef(onAuthenticated);
-  onAuthenticatedRef.current = onAuthenticated;
-  const authenticationHandled = useRef(false);
   const [sessionChecked, setSessionChecked] = useState(false);
+  const [sdkError, setSdkError] = useState('');
+  const onAuthenticatedRef = useRef(onAuthenticated);
+  const authenticationHandled = useRef(false);
+  onAuthenticatedRef.current = onAuthenticated;
+
+  const selectMode = (nextMode) => {
+    setMode(nextMode);
+    setRegistrationError('');
+    setRegistrationMessage('');
+    setSdkError('');
+  };
 
   useEffect(() => {
-    if (mode !== 'login' || !window.catalyst || !window.catalyst.auth) return undefined;
-
+    if (mode !== 'login' || authError) return undefined;
     let stopped = false;
+    let readinessAttempts = 0;
+    let readinessTimer;
+
     const showLoginForm = () => {
+      const redirectUrl = `${window.location.origin}/app/index.html${window.location.search || ''}`;
       window.catalyst.auth.signIn('loginDivElementId', {
-        service_url: 'https://beautyguild-20117268527.development.catalystserverless.eu/app/index.html',
+        service_url: redirectUrl,
       });
       setSessionChecked(true);
     };
+
     const checkSession = async () => {
-      // Right after an explicit logout, Zoho's own identity session can still report as
-      // authenticated (signOut() doesn't reliably end it) - skip trusting that just this once
-      // so a logout actually shows the login form instead of silently signing back in.
       if (skipInitialAuthCheck) {
         if (onAuthCheckSkipped) onAuthCheckSkipped();
         if (!stopped) showLoginForm();
@@ -38,7 +56,7 @@ export default function AccountStep({ onAuthenticated, authError, skipInitialAut
       try {
         const response = await window.catalyst.auth.isUserAuthenticated();
         if (stopped) return;
-        if (response && response.content) {
+        if (response?.content) {
           if (!authenticationHandled.current) {
             authenticationHandled.current = true;
             onAuthenticatedRef.current(response.content);
@@ -47,15 +65,32 @@ export default function AccountStep({ onAuthenticated, authError, skipInitialAut
           return;
         }
       } catch (error) {
-        // No active session: render the Catalyst login iframe below.
+        // An unauthenticated response is expected here; render the login form.
       }
       if (!stopped) showLoginForm();
     };
-    checkSession();
+
+    const waitForSdk = () => {
+      if (stopped) return;
+      if (window.catalyst?.auth) {
+        checkSession();
+        return;
+      }
+      readinessAttempts += 1;
+      if (readinessAttempts >= 40) {
+        setSdkError('The secure login service did not load. Please refresh the page and try again.');
+        setSessionChecked(true);
+        return;
+      }
+      readinessTimer = window.setTimeout(waitForSdk, 250);
+    };
+
+    waitForSdk();
     return () => {
       stopped = true;
+      window.clearTimeout(readinessTimer);
     };
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, authError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const register = async (event) => {
     event.preventDefault();
@@ -65,64 +100,74 @@ export default function AccountStep({ onAuthenticated, authError, skipInitialAut
       setRegistrationError('Please enter your first name, last name and email address.');
       return;
     }
-    if (!window.catalyst || !window.catalyst.auth) {
+    if (!window.catalyst?.auth) {
       setRegistrationError('Authentication is still loading. Please try again.');
       return;
     }
     setRegistering(true);
     try {
-      await window.catalyst.auth.signUp({
+      const response = await window.catalyst.auth.signUp({
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         email_id: email.trim(),
         platform_type: 'web',
         redirect_url: `${window.location.origin}/app/index.html`,
       });
-      setRegistrationMessage('Check your email for the secure link to set your password and activate your account.');
+      const status = Number(response?.status || response?.statusCode || 200);
+      const contentStatus = String(response?.content?.status || '').toLowerCase();
+      if (status >= 400 || contentStatus === 'failure' || contentStatus === 'error') throw response;
+      setRegistrationMessage('If this email is new, we have sent a secure activation link. If you already have an account, log in or use Forgot password.');
     } catch (error) {
-      setRegistrationError(error?.message || 'We could not start registration. Please try again.');
+      setRegistrationError(friendlyRegistrationError(error));
+    } finally {
+      setRegistering(false);
     }
-    setRegistering(false);
   };
 
   return (
-    <div className="acc-account-shell">
-      <div style={{ textAlign: 'center' }}>
-        <div className="acc-step-heading" style={{ color: '#E0007F' }}>
-          Log in or register for your Beauty Guild account to start your accreditation application.
+    <div className="auth-page">
+      <section className="auth-intro" aria-label="Beauty Guild member portal">
+        <div className="auth-brand"><img src="/app/beauty-guild-mark.svg" alt="" /><span>beautyguild</span></div>
+        <div>
+          <span className="portal-eyebrow">MEMBER PORTAL</span>
+          <h1>Welcome to your Beauty Guild account</h1>
+          <p>Manage accreditation applications, qualifications and training centres from one secure place.</p>
         </div>
-      </div>
-      {authError && (
-        <div className="acc-warning" style={{ marginBottom: 18 }}>
-          <div className="acc-warning-body">
-            {authError}
+        <div className="auth-benefits" aria-label="Portal features"><span>Accreditation applications</span><span>Qualifications and centres</span><span>Secure member access</span></div>
+      </section>
+
+      <section className="auth-panel">
+        <div className="auth-panel-heading">
+          <h2>{mode === 'login' ? 'Log in to your account' : 'Create your account'}</h2>
+          <p>{mode === 'login' ? 'Use the email address linked to your Beauty Guild account.' : 'We will email you a secure link to set your password.'}</p>
+        </div>
+        <div className="auth-tabs" role="tablist" aria-label="Account access">
+          <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => selectMode('login')}>Log in</button>
+          <button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => selectMode('register')}>Register</button>
+        </div>
+
+        {authError ? (
+          <div className="auth-blocked" role="alert"><strong>We could not open your portal account</strong><p>{authError}</p><button type="button" className="acc-btn-secondary" onClick={onResetAuth}>Sign out and try another account</button></div>
+        ) : mode === 'login' ? (
+          <div className="auth-login-frame">
+            {(sdkError || !sessionChecked) && <div className={sdkError ? 'auth-inline-error' : 'auth-loading'} aria-live="polite">{sdkError || 'Checking your secure session…'}</div>}
+            {!sdkError && <div id="loginDivElementId" />}
           </div>
-        </div>
-      )}
-      <div className="acc-card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', borderBottom: '1px solid #E8E5F0' }}>
-          <button type="button" onClick={() => setMode('login')} style={{ flex: 1, padding: 15, border: 0, background: mode === 'login' ? '#FF1B8D' : '#F7F6FA', color: mode === 'login' ? '#fff' : '#4A4760', fontWeight: 700, cursor: 'pointer' }}>Log in</button>
-          <button type="button" onClick={() => setMode('register')} style={{ flex: 1, padding: 15, border: 0, background: mode === 'register' ? '#FF1B8D' : '#F7F6FA', color: mode === 'register' ? '#fff' : '#4A4760', fontWeight: 700, cursor: 'pointer' }}>Register</button>
-        </div>
-        {authError ? null : mode === 'login' ? (
-          <div id="loginDivElementId" style={{ minHeight: 620, height: 620 }}>
-            {!sessionChecked && <div style={{ padding: 40, textAlign: 'center', color: '#777286' }}>Checking your session…</div>}
-          </div>
+        ) : registrationMessage ? (
+          <div className="auth-registration-success" role="status"><span aria-hidden="true">✓</span><h3>Check your email</h3><p>{registrationMessage}</p><button type="button" className="acc-btn-primary" onClick={() => selectMode('login')}>Go to login</button></div>
         ) : (
-          <form onSubmit={register} style={{ padding: 32 }}>
-            <h2 style={{ margin: '0 0 8px', color: '#28243A', fontSize: 24 }}>Create your account</h2>
-            <p style={{ margin: '0 0 24px', color: '#777286', fontSize: 14, lineHeight: 1.5 }}>We’ll email you a secure link to set your password.</p>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <label className="acc-field" style={{ flex: 1 }}><span>First name</span><input className="acc-input" value={firstName} onChange={(e) => setFirstName(e.target.value)} /></label>
-              <label className="acc-field" style={{ flex: 1 }}><span>Last name</span><input className="acc-input" value={lastName} onChange={(e) => setLastName(e.target.value)} /></label>
+          <form className="auth-register-form" onSubmit={register} noValidate>
+            <div className="auth-name-grid">
+              <label className="acc-field"><span>First name</span><input className="acc-input" autoComplete="given-name" value={firstName} onChange={(event) => setFirstName(event.target.value)} /></label>
+              <label className="acc-field"><span>Last name</span><input className="acc-input" autoComplete="family-name" value={lastName} onChange={(event) => setLastName(event.target.value)} /></label>
             </div>
-            <label className="acc-field"><span>Email address</span><input className="acc-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-            {registrationError && <div className="acc-warning"><div className="acc-warning-body">{registrationError}</div></div>}
-            {registrationMessage && <div style={{ padding: 14, borderRadius: 10, background: '#F0FBF5', color: '#176B3A', fontSize: 14, lineHeight: 1.5, marginBottom: 18 }}>{registrationMessage}</div>}
-            <button type="submit" className="acc-btn-primary" disabled={registering} style={{ width: '100%', padding: 14 }}>{registering ? 'Sending…' : 'Send registration email'}</button>
+            <label className="acc-field"><span>Email address</span><input className="acc-input" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+            <p className="auth-existing-note">Already registered? Choose Log in above or use Forgot password in the login form.</p>
+            {registrationError && <div className="auth-inline-error" role="alert">{registrationError}</div>}
+            <button type="submit" className="acc-btn-primary auth-submit" disabled={registering}>{registering ? 'Sending secure email…' : 'Create account'}</button>
           </form>
         )}
-      </div>
+      </section>
     </div>
   );
 }

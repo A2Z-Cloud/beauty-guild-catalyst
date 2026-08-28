@@ -142,6 +142,16 @@ export const ADDITIONAL_VENUE_TOTAL = ADDITIONAL_VENUE_FEE + ADDITIONAL_VENUE_VA
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+// CRM dates are returned as ISO YYYY-MM-DD. Keep numeric dates consistent across
+// customer-facing portal screens without relying on browser locale or timezone.
+export function formatUkDate(dateStr) {
+  if (!dateStr) return '';
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) return dateStr;
+  const isoMatch = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[3]}/${isoMatch[2]}/${isoMatch[1]}`;
+  return String(dateStr);
+}
+
 // "03/03/2027" -> "03 March 2027", matching the production "Accreditation Valid Until" format.
 // Accepts either a UK "DD/MM/YYYY" string or a raw CRM ISO "YYYY-MM-DD" date.
 export function formatLongDate(dateStr) {
@@ -193,7 +203,10 @@ export function isStepValid(stepIndex, acc) {
     case 7:
       return true; // Geocoding - confirming the pin location, nothing to validate.
     case 8:
-      return !!acc.ot && !!acc.ov && (acc.ot === 'no' || acc.tutQual === 'yes');
+      return !!acc.ot && !!acc.ov && (
+        acc.ot === 'no'
+        || (acc.tutQual === 'yes' && Number.isInteger(Number(acc.otN)) && Number(acc.otN) > 0)
+      );
     default:
       return true;
   }

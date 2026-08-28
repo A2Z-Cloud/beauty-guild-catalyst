@@ -156,7 +156,7 @@ async function getMembershipDecision(headers, contactId, startDate, expiryDate) 
 		membershipType: activeDeal.Membership_Type,
 		membershipStart: activeDeal.Start_Date || null,
 		membershipExpiry: activeDeal.Expiry_Date || null,
-		membershipId: activeDeal.Member_Profile.id,
+		membershipId: activeDeal.Member_Profile && activeDeal.Member_Profile.id || null,
 		dealId: activeDeal.id,
 	} : {
 		membershipRequired: true,
@@ -189,6 +189,32 @@ function loqateUrl(path, params) {
 	return url;
 }
 
+function getLoqateItems(body) {
+	const items = Array.isArray(body && body.Items) ? body.Items : [];
+	const failure = items.find((item) => item && item.Error);
+	if (failure) {
+		const err = new Error(failure.Description || failure.Cause || failure.Error || 'Loqate request failed');
+		err.details = { code: failure.Error, description: failure.Description || failure.Cause || null };
+		throw err;
+	}
+	return items;
+}
+
+function mapLoqateAddress(item) {
+	const physicalLine = [item.SubBuilding, item.BuildingName, item.BuildingNumber, item.Street].filter(Boolean).join(' ').trim();
+	const addressLine1 = item.Line1 || item.Company || physicalLine || '';
+	const addressLine2 = item.Line2 || (!item.Line1 && item.Company && physicalLine && physicalLine !== addressLine1 ? physicalLine : '');
+	return {
+		addressLine1,
+		addressLine2,
+		addressLine3: item.Line3 || '',
+		town: item.City || '',
+		county: item.ProvinceName || item.AdminAreaName || item.Province || '',
+		postcode: item.PostalCode || '',
+		country: item.CountryName || '',
+	};
+}
+
 app.get('/address/find', async (req, res) => {
 	const text = String(req.query.text || '').trim();
 	if (!text) return res.status(400).json({ error: 'text is required' });
@@ -198,11 +224,12 @@ app.get('/address/find', async (req, res) => {
 		if (process.env.LOQATE_COUNTRY_FILTER) params.Countries = process.env.LOQATE_COUNTRY_FILTER;
 		const loqateRes = await fetch(loqateUrl('/Capture/Interactive/Find/v1.10/json3.ws', params));
 		const body = await loqateRes.json();
-		if (!loqateRes.ok) return res.status(502).json({ error: 'Loqate address search failed' });
-		res.json({ items: body.Items || [] });
+		if (!loqateRes.ok) return res.status(502).json({ error: 'Loqate address search failed', details: body });
+		const maxResults = Math.max(1, Number(process.env.LOQATE_MAX_RESULTS) || 10);
+		res.json({ items: getLoqateItems(body).slice(0, maxResults) });
 	} catch (err) {
 		console.log('Loqate find error', err);
-		res.status(502).json({ error: 'Address search unavailable' });
+		res.status(502).json({ error: 'Address search unavailable', details: err.details || err.message });
 	}
 });
 
@@ -212,16 +239,12 @@ app.get('/address/retrieve', async (req, res) => {
 	try {
 		const loqateRes = await fetch(loqateUrl('/Capture/Interactive/Retrieve/v1.30/json6.ws', { Id: id }));
 		const body = await loqateRes.json();
-		if (!loqateRes.ok) return res.status(502).json({ error: 'Loqate address retrieve failed' });
-		const item = (body.Items || [])[0] || null;
-		res.json({ address: item ? {
-			addressLine1: item.Line1 || '', addressLine2: item.Line2 || '', addressLine3: item.Line3 || '',
-			town: item.City || '', county: item.ProvinceName || item.AdminAreaName || '',
-			postcode: item.PostalCode || '', country: item.CountryName || '',
-		} : null });
+		if (!loqateRes.ok) return res.status(502).json({ error: 'Loqate address retrieve failed', details: body });
+		const item = getLoqateItems(body)[0] || null;
+		res.json({ address: item ? mapLoqateAddress(item) : null });
 	} catch (err) {
 		console.log('Loqate retrieve error', err);
-		res.status(502).json({ error: 'Address retrieve unavailable' });
+		res.status(502).json({ error: 'Address retrieve unavailable', details: err.details || err.message });
 	}
 });
 
@@ -233,12 +256,12 @@ app.get('/address/geocode', async (req, res) => {
 	try {
 		const loqateRes = await fetch(loqateUrl('/Geocoding/International/Geocode/v1.10/json6.ws', { Country: country, Location: location }));
 		const body = await loqateRes.json();
-		if (!loqateRes.ok) return res.status(502).json({ error: 'Loqate geocode failed' });
-		const item = (body.Items || [])[0] || null;
+		if (!loqateRes.ok) return res.status(502).json({ error: 'Loqate geocode failed', details: body });
+		const item = getLoqateItems(body)[0] || null;
 		res.json({ coordinates: item ? { latitude: item.Latitude, longitude: item.Longitude } : null });
 	} catch (err) {
 		console.log('Loqate geocode error', err);
-		res.status(502).json({ error: 'Geocoding unavailable' });
+		res.status(502).json({ error: 'Geocoding unavailable', details: err.details || err.message });
 	}
 });
 
@@ -298,6 +321,8 @@ app.post('/payments/checkout', async (req, res) => {
 			accreditation_id: accreditationId, application_id: applicationId || accreditationId,
 			contact_id: contactId, email, name: name || '',
 			product_details: membershipRequired ? 'Accreditation + Associate Membership' : 'Accreditation',
+			product_name: membershipRequired ? 'Accreditation + Associate Membership' : 'Standard Accreditation',
+			product_amount: membershipRequired ? '409.00' : '354.00', currency: 'GBP',
 			membership_required: membershipRequired ? 'true' : 'false', membership_id: membershipId || '', status: 'pending',
 			membership_details: JSON.stringify({
 				required: membershipRequired,
@@ -320,7 +345,7 @@ app.post('/payments/checkout', async (req, res) => {
 			// field's 450-char cap. Skip the link rather than let that fail the whole update -
 			// otherwise Stripe_Checkout_Session_ID (used to avoid recreating duplicate sessions)
 			// never gets saved either, since both fields are written in one PUT.
-			const crmFields = { Stripe_Checkout_Session_ID: body.id };
+			const crmFields = { Stripe_Checkout_Session_ID: body.id, Payment_Status: 'Payment Processing' };
 			if (body.url && body.url.length <= 450) crmFields.Stripe_Payment_Link = body.url;
 			await crmUpdate(crmHeaders, 'Training_Centre_Accred', accreditationId, crmFields);
 		} catch (crmErr) {
@@ -606,15 +631,20 @@ app.post('/qualifications', async (req, res) => {
 			Verification_Status: 'Not Verified',
 		};
 		const id = await crmCreate(headers, 'Qualifications', record);
-		// The first qualification moves the linked application into the staff
-		// processing queue. Further qualifications remain addable and do not
-		// change the stage again.
-		const existingQualificationsRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Qualifications/search?criteria=((Contact:equals:${contactId})and(Primary_Accreditation:equals:${selected.accreditationId}))&fields=id`, { headers });
-		const existingQualifications = existingQualificationsRes.ok ? ((await existingQualificationsRes.json()).data || []) : [];
-		if (existingQualifications.length <= 1) {
+		// This update is intentionally idempotent. CRM search indexing can lag behind
+		// a newly-created Qualification, so counting records here caused a saved
+		// qualification to be reported as a failure when the follow-up stage update
+		// failed. Reapplying the same stage for later qualifications is harmless.
+		let stageUpdated = true;
+		let warning = null;
+		try {
 			await crmUpdate(headers, 'Training_Centre_Accred', selected.accreditationId, { Application_Stage: 'Needs Processing' });
+		} catch (stageErr) {
+			stageUpdated = false;
+			warning = 'Your qualification was saved, but the application status could not be refreshed. The Guild team can still review the qualification.';
+			console.log('qualification saved but accreditation stage update failed', stageErr && stageErr.details ? stageErr.details : stageErr);
 		}
-		res.json({ qualification: { id, ...record } });
+		res.status(201).json({ qualification: { id, ...record }, applicationStage: stageUpdated ? 'Needs Processing' : null, stageUpdated, warning });
 	} catch (err) {
 		console.log('qualification create error', err, err.details && JSON.stringify(err.details));
 		res.status(502).json({ error: 'Qualification could not be saved', debug: { name: err.name, message: err.message, details: err.details, stack: err.stack } });
@@ -1009,12 +1039,16 @@ app.post('/accreditations/submit', async (req, res) => {
 	if (!contactId || !school || !school.name) {
 		return res.status(400).json({ error: 'contactId and school.name are required' });
 	}
+	let accountId = existingAccountId || null;
+	let centreId = existingCentreId || null;
+	let accredId = accreditationId || null;
+	let linkId = existingLinkId || null;
 
 	try {
 		const catalystApp = catalyst.initialize(req);
 		const { headers } = await catalystApp.connections().getConnectionCredentials(CRM_CONNECTION_NAME);
 
-		const accountId = existingAccountId || await crmCreate(headers, 'Accounts', { Account_Name: school.name });
+		accountId = accountId || await crmCreate(headers, 'Accounts', { Account_Name: school.name });
 
 		const centreRecord = {
 			Name: school.name,
@@ -1024,12 +1058,15 @@ app.post('/accreditations/submit', async (req, res) => {
 			Phone_Number: school.phone || undefined,
 			Mobile_Phone_Number: school.mobile || undefined,
 			Address_Line_1: school.addressLine1 || undefined,
+			Address_Line_2: school.addressLine2 || undefined,
+			Address_Line_3: school.addressLine3 || undefined,
 			Town: school.town || undefined,
 			County: school.county || undefined,
 			Country: school.country || undefined,
+			Postcode: school.postcode || undefined,
 			Centre_Status: 'Unverified',
 		};
-		const centreId = existingCentreId || await crmCreate(headers, 'Training_Centres', centreRecord);
+		centreId = centreId || await crmCreate(headers, 'Training_Centres', centreRecord);
 		if (existingCentreId) await crmUpdate(headers, 'Training_Centres', centreId, centreRecord);
 
 		const today = new Date().toISOString().slice(0, 10);
@@ -1061,7 +1098,7 @@ app.post('/accreditations/submit', async (req, res) => {
 			Total_Quoted: totalQuoted,
 			Payment_Status: 'Not Paid',
 		};
-		const accredId = accreditationId || await crmCreate(headers, 'Training_Centre_Accred', accredRecord);
+		accredId = accredId || await crmCreate(headers, 'Training_Centre_Accred', accredRecord);
 		if (accreditationId) await crmUpdate(headers, 'Training_Centre_Accred', accredId, accredRecord);
 
 		const linkRecord = {
@@ -1072,7 +1109,7 @@ app.post('/accreditations/submit', async (req, res) => {
 			Start_Date: today,
 			End_Date: validTo,
 		};
-		const linkId = existingLinkId || await crmCreate(headers, 'Accreditation_Centre_Link', linkRecord);
+		linkId = linkId || await crmCreate(headers, 'Accreditation_Centre_Link', linkRecord);
 		if (existingLinkId) await crmUpdate(headers, 'Accreditation_Centre_Link', linkId, linkRecord);
 
 		// Drafts already create their course offerings. Reuse the same idempotent
@@ -1091,6 +1128,7 @@ app.post('/accreditations/submit', async (req, res) => {
 			error: 'Submission failed',
 			operation: 'CRM accreditation submission',
 			debug: { name: err.name, message: err.message, details: err.details, stack: err.stack },
+			partial: { accreditationId: accredId, accountId, centreId, linkId },
 			request: { contactId, accreditationId: accreditationId || null, accountId: existingAccountId || null, centreId: existingCentreId || null, linkId: existingLinkId || null, schoolName: school.name, courseCount: Array.isArray(courseIds) ? courseIds.length : 0 },
 		});
 	}
@@ -1119,11 +1157,12 @@ app.post('/venues', async (req, res) => {
 			Phone_Number: school.phone || undefined,
 			Mobile_Phone_Number: school.mobile || undefined,
 			Address_Line_1: school.addressLine1 || undefined,
+			Address_Line_2: school.addressLine2 || undefined,
+			Address_Line_3: school.addressLine3 || undefined,
 			Town: school.town || undefined,
 			County: school.county || undefined,
 			Country: school.country || undefined,
-			Latitude: school.latitude != null ? String(school.latitude) : undefined,
-			Longitude: school.longitude != null ? String(school.longitude) : undefined,
+			Postcode: school.postcode || undefined,
 			Centre_Status: 'Unverified',
 		});
 

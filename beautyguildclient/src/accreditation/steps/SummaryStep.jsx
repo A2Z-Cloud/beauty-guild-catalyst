@@ -11,18 +11,20 @@ function formatUkDate(iso) {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, submitting, checkingMembership, membershipRequired }) {
+export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, submitting, checkingMembership, membershipRequired, membershipError, onRetryMembership }) {
   const contactName = [acc.title, acc.fname, acc.surname].filter(Boolean).join(' ').trim();
   const selectedCourses = (courses || []).filter((c) => acc.courses.includes(c.id));
   const today = new Date().toISOString().slice(0, 10);
   const validTo = (() => { const d = new Date(today); d.setFullYear(d.getFullYear() + 1); return d.toISOString().slice(0, 10); })();
   const total = membershipRequired === true ? ACCREDITATION_WITH_MEMBERSHIP : ACCREDITATION_GRAND_TOTAL;
+  const associateMembershipFee = ACCREDITATION_WITH_MEMBERSHIP - ACCREDITATION_GRAND_TOTAL;
+  const pricingReady = typeof membershipRequired === 'boolean' && !checkingMembership;
 
   return (
     <div className="acc-summary-grid">
-      <div className="acc-card">
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Summary</div>
-        <div style={{ fontSize: 13, color: '#8A8598', marginBottom: 18 }}>
+      <div className="acc-card acc-summary-review-card">
+        <div className="acc-summary-title">Review application</div>
+        <div className="acc-summary-intro">
           Please check the following information is correct before proceeding.
         </div>
 
@@ -60,7 +62,7 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
           </div>
         </div>
 
-        <div className="acc-summary-map"><MapPicker latitude={acc.sch.latitude} longitude={acc.sch.longitude} onChange={() => {}} /></div>
+        <div className="acc-summary-map"><MapPicker latitude={acc.sch.latitude} longitude={acc.sch.longitude} draggable={false} /></div>
 
         <div style={{ fontSize: 11, fontWeight: 700, color: '#A5A0B5', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 10 }}>Info</div>
         <div className="acc-summary-info-grid" style={{ marginBottom: 18 }}>
@@ -83,27 +85,29 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
           {selectedCourses.length === 0 ? (
             <div style={{ fontSize: 13, color: '#A5A0B5' }}>No courses selected</div>
           ) : (
-            <div style={{ border: '1.5px solid #DCD9E8', borderRadius: 10, padding: '10px 13px' }}>
+            <div className="acc-summary-course-list">
               {selectedCourses.map((c) => <div key={c.id} style={{ fontSize: 13.5, padding: '3px 0' }}>{c.name}</div>)}
             </div>
           )}
         </div>
       </div>
 
-      <div className="acc-card" style={{ display: 'flex', flexDirection: 'column', gap: 15, height: 'fit-content' }}>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>Total Cost</div>
+      <div className="acc-card acc-summary-payment-card">
+        <div className="acc-summary-title">Payment summary</div>
         <div className="acc-summary-cost-row">
-          <span style={{ color: '#4A4760' }}>{membershipRequired === true ? 'Accreditation with Associate Membership' : 'Accreditation fee'}</span>
-          <span style={{ fontWeight: 700 }}>{membershipRequired === true ? f2(total) : f2(ACCREDITATION_FEE)}</span>
+          <span style={{ color: '#4A4760' }}>Standard accreditation</span>
+          <span style={{ fontWeight: 700 }}>{f2(ACCREDITATION_GRAND_TOTAL)}</span>
         </div>
-        {membershipRequired !== true && <div className="acc-summary-cost-row">
-          <span style={{ color: '#4A4760' }}>VAT Amount</span>
-          <span style={{ fontWeight: 700 }}>{f2(ACCREDITATION_VAT)}</span>
+        <div className="acc-summary-cost-note">Includes {f2(ACCREDITATION_FEE)} fee and {f2(ACCREDITATION_VAT)} VAT</div>
+        {membershipRequired === true && <div className="acc-summary-cost-row">
+          <span style={{ color: '#4A4760' }}>Associate Membership</span>
+          <span style={{ fontWeight: 700 }}>{f2(associateMembershipFee)}</span>
         </div>}
         <div className="acc-grand-total" style={{ padding: '10px 0 0', fontSize: 16 }}>
           <span>Grand Total</span>
           <span>{f2(total)}</span>
         </div>
+        {membershipError && <div className="acc-warning compact" role="alert"><div className="acc-warning-title">We couldn't confirm your price</div><div className="acc-warning-body">{membershipError}</div><button type="button" className="acc-btn-secondary" onClick={onRetryMembership}>Try again</button></div>}
         <label className="acc-checkbox-row top-border" onClick={() => setAccField('tob', !acc.tob)}>
           <span className={`acc-checkbox${acc.tob ? ' selected' : ''}`} style={{ marginTop: 1 }}>{acc.tob ? '✓' : ''}</span>
           <span style={{ fontSize: 13.5, color: '#4A4760', lineHeight: 1.6 }}>
@@ -113,10 +117,10 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
         <button
           type="button"
           className="acc-pay-btn"
-          disabled={!acc.tob || submitting || checkingMembership}
+          disabled={!acc.tob || submitting || !pricingReady}
           onClick={acc.tob ? onPay : onSave}
         >
-          {checkingMembership ? 'Checking membership…' : submitting ? 'Submitting…' : 'Pay Now'}
+          {!pricingReady ? 'Checking membership…' : submitting ? 'Submitting…' : `Pay ${f2(total)} now`}
         </button>
       </div>
     </div>

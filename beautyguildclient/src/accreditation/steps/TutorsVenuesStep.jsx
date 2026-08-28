@@ -5,6 +5,7 @@ export default function TutorsVenuesStep({ acc, setAccField, onOtChange }) {
   const otYes = acc.ot === 'yes';
   const ovYes = acc.ov === 'yes';
   const tutQualNo = otYes && acc.tutQual === 'no';
+  const tutorCountMissing = otYes && (!Number.isInteger(Number(acc.otN)) || Number(acc.otN) < 1);
   // Only nag once they've started answering - not on a still-untouched, freshly loaded step.
   const incomplete = !!acc.ot && (!acc.ov || (acc.ot === 'yes' && acc.tutQual !== 'yes'));
 
@@ -33,14 +34,17 @@ export default function TutorsVenuesStep({ acc, setAccField, onOtChange }) {
             <div style={{ paddingTop: 14 }}>
               <label style={{ display: 'block', fontSize: 12.5, color: '#4A4760', marginBottom: 7, fontWeight: 600 }}>How many tutors will teach your courses?</label>
               <input
-                className="acc-input"
+                className={`acc-input${tutorCountMissing ? ' input-error' : ''}`}
                 style={{ width: 140 }}
                 type="number"
                 min="1"
                 value={acc.otN}
                 onChange={(e) => setAccField('otN', e.target.value)}
                 placeholder="e.g. 2"
+                aria-invalid={tutorCountMissing}
+                aria-describedby={tutorCountMissing ? 'tutor-count-error' : undefined}
               />
+              {tutorCountMissing && <div id="tutor-count-error" className="acc-field-error">Enter the number of tutors before continuing.</div>}
             </div>
           </>
         )}
@@ -55,7 +59,7 @@ export default function TutorsVenuesStep({ acc, setAccField, onOtChange }) {
         )}
       </div>
       {incomplete && (
-        <div style={{ fontSize: 13, color: '#E0007F', fontWeight: 600 }}>Please fill in all of the fields</div>
+        <div style={{ fontSize: 13, color: '#E0007F', fontWeight: 600 }}>Please complete the highlighted fields before continuing.</div>
       )}
     </>
   );
