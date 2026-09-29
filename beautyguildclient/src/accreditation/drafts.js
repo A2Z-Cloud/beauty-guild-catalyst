@@ -3,11 +3,10 @@
 
 const STORAGE_KEY = 'bg_accreditation_drafts';
 
-export function loadDrafts() {
+function readAll() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const drafts = raw ? JSON.parse(raw) : [];
-    return drafts.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+    return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
@@ -18,15 +17,30 @@ function persist(drafts) {
   return drafts;
 }
 
-export function upsertDraft(draft) {
-  const drafts = loadDrafts();
-  const idx = drafts.findIndex((d) => d.id === draft.id);
-  if (idx === -1) drafts.unshift(draft); else drafts[idx] = draft;
-  return persist(drafts);
+// Scoped to the given contact - a shared/reused browser must never surface another
+// account's saved-for-later application. Storage itself still holds every account's drafts
+// together (so saving one account's draft can't clobber another's), but reads are always
+// filtered down to just the requested contact. Drafts saved before this scoping existed have
+// no contactId and are treated as unowned, so they simply stop appearing rather than risk
+// showing them to the wrong person.
+export function loadDrafts(contactId) {
+  if (!contactId) return [];
+  return readAll()
+    .filter((d) => d.contactId === contactId)
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
 
-export function deleteDraft(id) {
-  return persist(loadDrafts().filter((d) => d.id !== id));
+export function upsertDraft(draft) {
+  const drafts = readAll();
+  const idx = drafts.findIndex((d) => d.id === draft.id);
+  if (idx === -1) drafts.unshift(draft); else drafts[idx] = draft;
+  persist(drafts);
+  return loadDrafts(draft.contactId);
+}
+
+export function deleteDraft(id, contactId) {
+  persist(readAll().filter((d) => d.id !== id));
+  return loadDrafts(contactId);
 }
 
 export function draftLabel(acc) {

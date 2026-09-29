@@ -1,9 +1,9 @@
 import React from 'react';
-import { ACCREDITATION_FEE, ACCREDITATION_VAT, ACCREDITATION_GRAND_TOTAL, ACCREDITATION_WITH_MEMBERSHIP } from '../data';
+import { accreditationPricing } from '../data';
 import MapPicker from '../components/MapPicker';
 
 const f2 = (n) => `£${n.toFixed(2)}`;
-const readOnlyStyle = { background: '#F6F5FA', color: '#4A4760' };
+const readOnlyStyle = { background: 'var(--brand-pink-soft)', color: 'rgba(0,0,0,.62)' };
 
 function formatUkDate(iso) {
   const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -15,9 +15,11 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
   const contactName = [acc.title, acc.fname, acc.surname].filter(Boolean).join(' ').trim();
   const selectedCourses = (courses || []).filter((c) => acc.courses.includes(c.id));
   const today = new Date().toISOString().slice(0, 10);
-  const validTo = (() => { const d = new Date(today); d.setFullYear(d.getFullYear() + 1); return d.toISOString().slice(0, 10); })();
-  const total = membershipRequired === true ? ACCREDITATION_WITH_MEMBERSHIP : ACCREDITATION_GRAND_TOTAL;
-  const associateMembershipFee = ACCREDITATION_WITH_MEMBERSHIP - ACCREDITATION_GRAND_TOTAL;
+  // Runs to the day before the anniversary of the start date (e.g. 1 Sept 26 - 31 Aug 27),
+  // not the exact same calendar date a year later.
+  const validTo = (() => { const d = new Date(today); d.setFullYear(d.getFullYear() + 1); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+  const { international, fee, vat, baseTotal, total, membershipPriceTbc } = accreditationPricing(acc, membershipRequired === true);
+  const associateMembershipFee = total - baseTotal;
   const pricingReady = typeof membershipRequired === 'boolean' && !checkingMembership;
 
   return (
@@ -28,7 +30,7 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
           Please check the following information is correct before proceeding.
         </div>
 
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#A5A0B5', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(0,0,0,.62)', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 10 }}>
           Training School Address and Details
         </div>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>{acc.sch.name || '—'}</div>
@@ -64,18 +66,18 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
 
         <div className="acc-summary-map"><MapPicker latitude={acc.sch.latitude} longitude={acc.sch.longitude} draggable={false} /></div>
 
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#A5A0B5', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 10 }}>Info</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(0,0,0,.62)', letterSpacing: '.07em', textTransform: 'uppercase', marginBottom: 10 }}>Info</div>
         <div className="acc-summary-info-grid" style={{ marginBottom: 18 }}>
           <div>
-            <div style={{ fontSize: 11.5, color: '#8A8598', marginBottom: 4 }}>Accreditation Type</div>
-            <div style={{ fontSize: 13.5, fontWeight: 600 }}>Standard Accreditation</div>
+            <div style={{ fontSize: 11.5, color: 'rgba(0,0,0,.62)', marginBottom: 4 }}>Accreditation Type</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600 }}>{international ? 'International Accreditation' : 'Standard Accreditation'}</div>
           </div>
           <div>
-            <div style={{ fontSize: 11.5, color: '#8A8598', marginBottom: 4 }}>Valid From</div>
+            <div style={{ fontSize: 11.5, color: 'rgba(0,0,0,.62)', marginBottom: 4 }}>Valid From</div>
             <div style={{ fontSize: 13.5, fontWeight: 600 }}>{formatUkDate(today)}</div>
           </div>
           <div>
-            <div style={{ fontSize: 11.5, color: '#8A8598', marginBottom: 4 }}>Valid To</div>
+            <div style={{ fontSize: 11.5, color: 'rgba(0,0,0,.62)', marginBottom: 4 }}>Valid To</div>
             <div style={{ fontSize: 13.5, fontWeight: 600 }}>{formatUkDate(validTo)}</div>
           </div>
         </div>
@@ -83,7 +85,7 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
         <div className="acc-field" style={{ marginBottom: 0 }}>
           <label>Courses</label>
           {selectedCourses.length === 0 ? (
-            <div style={{ fontSize: 13, color: '#A5A0B5' }}>No courses selected</div>
+            <div style={{ fontSize: 13, color: 'rgba(0,0,0,.62)' }}>No courses selected</div>
           ) : (
             <div className="acc-summary-course-list">
               {selectedCourses.map((c) => <div key={c.id} style={{ fontSize: 13.5, padding: '3px 0' }}>{c.name}</div>)}
@@ -95,13 +97,13 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
       <div className="acc-card acc-summary-payment-card">
         <div className="acc-summary-title">Payment summary</div>
         <div className="acc-summary-cost-row">
-          <span style={{ color: '#4A4760' }}>Standard accreditation</span>
-          <span style={{ fontWeight: 700 }}>{f2(ACCREDITATION_GRAND_TOTAL)}</span>
+          <span style={{ color: 'rgba(0,0,0,.62)' }}>{international ? 'International accreditation' : 'Standard accreditation'}</span>
+          <span style={{ fontWeight: 700 }}>{f2(baseTotal)}</span>
         </div>
-        <div className="acc-summary-cost-note">Includes {f2(ACCREDITATION_FEE)} fee and {f2(ACCREDITATION_VAT)} VAT</div>
+        <div className="acc-summary-cost-note">{vat > 0 ? `Includes ${f2(fee)} fee and ${f2(vat)} VAT` : `${f2(fee)} fee - VAT not applicable to international accreditations`}</div>
         {membershipRequired === true && <div className="acc-summary-cost-row">
-          <span style={{ color: '#4A4760' }}>Associate Membership</span>
-          <span style={{ fontWeight: 700 }}>{f2(associateMembershipFee)}</span>
+          <span style={{ color: 'rgba(0,0,0,.62)' }}>{international ? 'International Membership' : 'Associate Membership'}</span>
+          <span style={{ fontWeight: 700 }}>{membershipPriceTbc ? 'Confirmed by our team' : f2(associateMembershipFee)}</span>
         </div>}
         <div className="acc-grand-total" style={{ padding: '10px 0 0', fontSize: 16 }}>
           <span>Grand Total</span>
@@ -110,8 +112,8 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
         {membershipError && <div className="acc-warning compact" role="alert"><div className="acc-warning-title">We couldn't confirm your price</div><div className="acc-warning-body">{membershipError}</div><button type="button" className="acc-btn-secondary" onClick={onRetryMembership}>Try again</button></div>}
         <label className="acc-checkbox-row top-border" onClick={() => setAccField('tob', !acc.tob)}>
           <span className={`acc-checkbox${acc.tob ? ' selected' : ''}`} style={{ marginTop: 1 }}>{acc.tob ? '✓' : ''}</span>
-          <span style={{ fontSize: 13.5, color: '#4A4760', lineHeight: 1.6 }}>
-            I have read and accept the conditions in the <span style={{ color: '#E00879', fontWeight: 600 }}>Terms of Business</span> and <span style={{ color: '#E00879', fontWeight: 600 }}>Privacy Statement</span>
+          <span style={{ fontSize: 13.5, color: 'rgba(0,0,0,.62)', lineHeight: 1.6 }}>
+            I have read and accept the conditions in the <span style={{ color: 'var(--brand-pink)', fontWeight: 600 }}>Terms of Business</span> and <span style={{ color: 'var(--brand-pink)', fontWeight: 600 }}>Privacy Statement</span>
           </span>
         </label>
         <button

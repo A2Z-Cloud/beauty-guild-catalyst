@@ -1,6 +1,9 @@
 import React from 'react';
 import { STEP_LABELS, formatUkDate } from './data';
 import { draftLabel, formatSavedAt } from './drafts';
+import { HouseUsersIcon, PencilSquareIcon, CardIcon, TargetArrowIcon } from './icons';
+
+const SUMMARY_ICONS = [HouseUsersIcon, PencilSquareIcon, CardIcon, TargetArrowIcon];
 
 function SavedApplicationsSection({ drafts, onResume, onDiscard }) {
   if (drafts.length === 0) return null;
@@ -28,7 +31,7 @@ function PendingApplicationsSection({ items, onAddQualifications }) {
 
 function AccreditationSummary({ drafts, awaiting, pending, accredited }) {
   const stats = [['Accredited centres', accredited.length], ['Drafts', drafts.length], ['Awaiting payment', awaiting.length], ['In progress', pending.length]];
-  return <section className="accreditation-overview"><div className="accreditation-overview-heading"><h2>Overview</h2><span>Your accreditation at a glance</span></div><div className="accreditation-summary" aria-label="Accreditation summary">{stats.map(([label, value], index) => <div className={`accreditation-summary-item tone-${index + 1}`} key={label}><span className="summary-mark" aria-hidden="true" /><div><strong>{value}</strong><span>{label}</span></div></div>)}</div></section>;
+  return <section className="accreditation-overview"><div className="accreditation-overview-heading"><h2>Overview</h2><span>Your accreditation at a glance</span></div><div className="accreditation-summary" aria-label="Accreditation summary">{stats.map(([label, value], index) => { const Icon = SUMMARY_ICONS[index]; return <div className={`accreditation-summary-item tone-${index + 1}`} key={label}><span className="summary-icon" aria-hidden="true"><Icon /></span><div><strong>{value}</strong><span>{label}</span></div></div>; })}</div></section>;
 }
 
 function AwaitingPaymentSection({ items, onOpen, onPay, payingApplicationId }) {
@@ -57,12 +60,12 @@ function SchoolCard({ s, onClick }) {
   );
 }
 
-function AccreditedSchoolsSection({ schools, onSelectSchool }) {
+function AccreditedSchoolsSection({ schools, onSelectSchool, onStartNew }) {
   return (
     <section className="accreditation-section">
       <div className="accreditation-section-heading"><div><h2>Accredited training centres</h2><p>Manage each centre and its accreditation records.</p></div><span>{schools.length}</span></div>
       {schools.length === 0 ? (
-        <div className="accreditation-empty"><strong>No accredited training centres yet</strong><span>Start an application to begin your accreditation journey.</span></div>
+        <div className="accreditation-empty"><strong>No accredited training centres yet</strong><span>Start an application to begin your accreditation journey.</span><button type="button" className="acc-btn-primary accreditation-empty-cta" onClick={onStartNew}>Start An Application</button></div>
       ) : (
         <>
           <div className="acc-schools-list">
@@ -85,7 +88,7 @@ function AccreditationsErrorNotice({ message }) {
 
 function RefreshingNotice() {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#8A8598', marginBottom: 14 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'rgba(0,0,0,.62)', marginBottom: 14 }}>
       <span className="acc-spinner" />
       Refreshing your accreditations…
     </div>
@@ -123,7 +126,7 @@ export default function AccreditationEntry({
       <AccreditationSummary drafts={drafts} awaiting={awaitingPaymentApplications || []} pending={pendingApplications} accredited={accreditedSchools} />
       {refreshing && <RefreshingNotice />}
       <div className={`accreditation-primary-row${membership ? '' : ' single'}`}>
-        <AccreditedSchoolsSection schools={accreditedSchools} onSelectSchool={onSelectSchool} />
+        <AccreditedSchoolsSection schools={accreditedSchools} onSelectSchool={onSelectSchool} onStartNew={onStartNew} />
         <MembershipSection membership={membership} />
       </div>
       {accreditationsError && <AccreditationsErrorNotice message={accreditationsError} />}

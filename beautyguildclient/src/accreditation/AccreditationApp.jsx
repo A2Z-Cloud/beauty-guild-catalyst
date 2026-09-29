@@ -3,8 +3,10 @@ import './AccreditationApp.css';
 import StepProgress from './components/StepProgress';
 import Modal from './components/Modal';
 import Sidebar from './Sidebar';
+import { PersonIcon, GraduationCapIcon, BuildingIcon, ShieldIcon, MegaphoneIcon, DocumentIcon, LogoutIcon } from './icons';
 import AccreditationEntry from './AccreditationEntry';
-import ManageSchool from './ManageSchool';
+import ManageSchool, { TableShell, InvoiceStatusBadge } from './ManageSchool';
+import ManageMembership from './ManageMembership';
 import AccreditationDone from './AccreditationDone';
 import AccountStep from './steps/AccountStep';
 import RegisterDetailsStep from './steps/RegisterDetailsStep';
@@ -20,13 +22,47 @@ import TutorsVenuesStep from './steps/TutorsVenuesStep';
 import SummaryStep from './steps/SummaryStep';
 import {
   initialAccState, isStepValid, mergeInterestsWithTraining, withDialCode, parseDialCode,
-  ACCREDITATION_FEE, ACCREDITATION_VAT, ACCREDITATION_GRAND_TOTAL, ACCREDITATION_WITH_MEMBERSHIP, formatUkDate,
+  accreditationPricing, formatUkDate,
 } from './data';
 import { loadDrafts, upsertDraft, deleteDraft } from './drafts';
-import { loadSession, saveSession, clearSession } from './session';
-import { fetchActiveCourses, lookupContactByEmail, fetchAccreditations, fetchAccreditationDraft, saveAccreditationDraft, createContact, submitAccreditation, resolveMembership, createCheckoutSession } from './api';
+import { loadSession, saveSession, clearSession, saveReferralCode } from './session';
+import { fetchActiveCourses, lookupContactByEmail, fetchAccreditations, fetchAccreditationDraft, saveAccreditationDraft, discardAccreditationDraft, createContact, submitAccreditation, resolveMembership, createCheckoutSession, fetchContactDocuments, fetchMembershipHistory, fetchAccountInvoices } from './api';
+import { DocumentGrid } from './documents';
 
 const STEP_NEXT_LABEL = { 8: 'Review and pay →' };
+
+// Static placeholder content, per the "Member Announcements" idea in the design feedback
+// doc - there's no CRM/Creator module backing real announcements yet, so this is a single
+// hardcoded slot rather than a list. Swap ANNOUNCEMENT to null to hide the section entirely.
+const ANNOUNCEMENT = { badge: 'NEW', title: 'Discover Our New GTi Korean Lash Lift Course', actionLabel: 'View Course', href: null };
+
+function MemberAnnouncement({ announcement, onNavigate }) {
+  if (!announcement) return null;
+  return (
+    <div className="portal-announcement">
+      <span className="portal-announcement-icon" aria-hidden="true"><MegaphoneIcon /></span>
+      <div className="portal-announcement-body">
+        <div className="portal-announcement-kicker">Member Announcements <span className="portal-announcement-badge">{announcement.badge}</span></div>
+        <strong>{announcement.title}</strong>
+      </div>
+      <button type="button" className="acc-btn-primary" onClick={() => onNavigate('GTi courses')}>{announcement.actionLabel}</button>
+    </div>
+  );
+}
+
+function DiscardDraftConfirm({ target, onCancel, onConfirm, discarding }) {
+  if (!target) return null;
+  return (
+    <div className="acc-modal-overlay" onClick={onCancel} role="presentation">
+      <div className="acc-modal" role="dialog" aria-modal="true" aria-labelledby="discard-draft-title" onClick={(e) => e.stopPropagation()}>
+        <div className="acc-modal-icon">⚠️</div>
+        <div className="acc-modal-title" id="discard-draft-title">Discard this application?</div>
+        <div className="acc-modal-body">"{target.name}" will be permanently deleted and cannot be recovered.</div>
+        <div className="tutor-modal-actions"><button type="button" className="acc-btn-secondary" onClick={onCancel} disabled={discarding}>Cancel</button><button type="button" className="acc-btn-primary" onClick={onConfirm} disabled={discarding}>{discarding ? 'Discarding…' : 'Discard application'}</button></div>
+      </div>
+    </div>
+  );
+}
 
 function toSchoolCard(a) {
   return {
@@ -35,6 +71,7 @@ function toSchoolCard(a) {
     accountName: a.accountName,
     accreditationId: a.id,
     name: a.schoolName || 'Unnamed training centre',
+    referralCode: a.referralCode || null,
     town: a.town || '',
     level: a.level || '',
     expires: formatUkDate(a.validTo),
@@ -74,20 +111,127 @@ function toDraftItem(a) {
   };
 }
 
-function PortalDashboard({ contact, membership, onAccreditation, onNavigate }) {
+// CRM's draft list is only ever used to learn about drafts this browser doesn't already
+// know about (e.g. started on another device) - it must never overwrite a draft already
+// held locally, since toDraftItem's reconstruction is a lossy stub (stepIndex reset to 1,
+// only the school name kept) and CRM's own search index lags real writes by ~20-30s. Both
+// of those together were the cause of drafts appearing to lose their answers/step on
+// resume, and of "duplicate" drafts appearing once the index caught up.
+function mergeCrmDrafts(localDrafts, crmDrafts) {
+  const localIds = new Set(localDrafts.map((d) => d.id));
+  const newFromCrm = (crmDrafts || []).filter((a) => !localIds.has(a.id)).map(toDraftItem);
+  return [...localDrafts, ...newFromCrm].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+}
+
+// The card's heading/copy/action depend on how far along the applicant's accreditation
+// is - most-action-needed states take priority over ones that are just "waiting". An
+// unpaid draft or awaiting-payment application is the most urgent (nothing happens until
+// they finish it), then outstanding qualifications (blocking approval), then a submitted
+// application under review (nothing to do but wait), then an accredited centre (business
+// as usual), and finally no application at all yet.
+function accreditationCardContent({ loaded, drafts, pendingApplications, awaitingPaymentApplications, accreditedSchools, onAccreditation, onResumeDraft, onOpenAwaitingPayment, onSelectQualifications, onStartNew }) {
+  // Until the real status has loaded (e.g. straight after a page refresh), don't guess -
+  // every field here starts out empty, which would otherwise flash "Apply for Guild
+  // Accreditation" even for an applicant who already has one in progress.
+  if (!loaded) {
+    return { heading: 'Accreditation', body: 'Loading your accreditation status…', onClick: onAccreditation };
+  }
+  const awaitingItem = (awaitingPaymentApplications || [])[0];
+  const draftItem = (drafts || [])[0];
+  const outstandingQualsItem = (pendingApplications || []).find((a) => a.applicationStage === 'Qualifications Outstanding');
+  const pendingItem = (pendingApplications || [])[0];
+
+  if (awaitingItem || draftItem) {
+    return {
+      heading: 'Continue Application', body: 'Your Accreditation Application is incomplete.',
+      onClick: () => (awaitingItem ? onOpenAwaitingPayment(awaitingItem) : onResumeDraft(draftItem)),
+    };
+  }
+  if (outstandingQualsItem) {
+    return {
+      heading: 'Add Qualifications', body: 'Your application has been received. Please upload your outstanding qualifications.',
+      onClick: () => onSelectQualifications(outstandingQualsItem),
+    };
+  }
+  if (pendingItem) {
+    return { heading: 'Accreditation', body: 'Your accreditation application is being reviewed.', onClick: onAccreditation };
+  }
+  if ((accreditedSchools || []).length > 0) {
+    return { heading: 'Accreditation', body: 'View and manage your accreditation application.', onClick: onAccreditation };
+  }
+  return { heading: 'Apply for Guild Accreditation', body: 'Start your Guild accreditation application.', onClick: onStartNew };
+}
+
+// Mobile-only persistent bottom bar (the sidebar itself becomes a hamburger-triggered
+// off-canvas drawer below the same breakpoint - see Sidebar.jsx) so the most-used account
+// actions stay reachable without opening the drawer.
+function MobileTabBar({ activeItem, onSection, onLogout }) {
+  const items = [
+    { label: 'My profile', icon: <PersonIcon /> },
+    { label: 'Documents', icon: <DocumentIcon /> },
+  ];
+  return (
+    <nav className="acc-mobile-tabbar">
+      {items.map(({ label, icon }) => (
+        <button
+          key={label}
+          type="button"
+          className={`acc-mobile-tab${activeItem === label ? ' active' : ''}`}
+          onClick={() => onSection(label)}
+        >
+          {icon}
+          <span>{label}</span>
+        </button>
+      ))}
+      <button type="button" className="acc-mobile-tab" onClick={onLogout}>
+        <LogoutIcon />
+        <span>Sign out</span>
+      </button>
+    </nav>
+  );
+}
+
+function AccountDetailsCard({ contact, membership }) {
+  const active = membership?.membershipStatus === 'active';
+  const memberName = contact ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim() : '';
+  const items = [
+    { label: 'Member name', value: memberName || 'Not recorded' },
+    { label: 'Membership type', value: active ? (membership.membershipType || 'Guild membership') : 'No current membership' },
+    { label: 'Insurance status', value: 'Coming soon' },
+    { label: 'Expiry date', value: active ? (formatUkDate(membership.membershipExpiry) || 'Not recorded') : '—' },
+  ];
+  return (
+    <div className="portal-account-card">
+      <div className="portal-account-card-heading">Account details</div>
+      <div className="portal-account-card-grid">
+        {items.map((item) => (
+          <div key={item.label} className="portal-account-stat">
+            <span className="portal-account-stat-label">{item.label}</span>
+            <span className="portal-account-stat-value">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PortalDashboard({ contact, membership, accreditationsLoaded, drafts, pendingApplications, awaitingPaymentApplications, accreditedSchools, onAccreditation, onResumeDraft, onOpenAwaitingPayment, onSelectQualifications, onStartNew, onNavigate }) {
+  const accreditationCard = accreditationCardContent({ loaded: accreditationsLoaded, drafts, pendingApplications, awaitingPaymentApplications, accreditedSchools, onAccreditation, onResumeDraft, onOpenAwaitingPayment, onSelectQualifications, onStartNew });
   return (
     <>
       <div className="acc-body portal-dashboard" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%' }}>
         <div className="portal-hero">
-          <div><div className="portal-eyebrow">BEAUTY GUILD MEMBER PORTAL</div><h1>Your portal at a glance</h1><p>Manage your membership, courses, accreditation and future insurance services in one place.</p></div>
+          <div><div className="portal-eyebrow">BEAUTY GUILD MEMBER PORTAL</div><h1>Your portal at a glance</h1><p>Manage your membership, courses, accreditation and insurance services in one place.</p></div>
           <button type="button" className="acc-btn-primary" onClick={onAccreditation}>Open accreditation →</button>
         </div>
         <div className="portal-card-grid">
-          <button type="button" className="portal-card" onClick={() => onNavigate('Membership')}><span className="portal-card-kicker">MEMBERSHIP</span><strong>{membership?.membershipStatus === 'active' ? `${membership.membershipType || 'Guild'} membership` : 'Membership'}</strong><span>{membership?.membershipStatus === 'active' ? `Valid until ${formatUkDate(membership.membershipExpiry) || 'recorded date'}` : 'View your membership status'}</span></button>
-          <button type="button" className="portal-card" onClick={() => onNavigate('GTi courses')}><span className="portal-card-kicker">LEARNING</span><strong>GTi courses</strong><span>Browse available courses</span></button>
-          <button type="button" className="portal-card" onClick={onAccreditation}><span className="portal-card-kicker">ACCREDITATION</span><strong>Training centres</strong><span>View applications and accredited schools</span></button>
-          <button type="button" className="portal-card" onClick={() => onNavigate('Insurance')}><span className="portal-card-kicker">COMING SOON</span><strong>Insurance</strong><span>Insurance services will be available here</span></button>
+          <button type="button" className="portal-card" onClick={() => onNavigate('Membership')}><span className="portal-card-icon"><PersonIcon /></span><span className="portal-card-kicker">MEMBERSHIP</span><strong>{membership?.membershipStatus === 'active' ? `${membership.membershipType || 'Guild'} Membership` : 'Guild Membership'}</strong><span>{membership?.membershipStatus === 'active' ? `Valid until ${formatUkDate(membership.membershipExpiry) || 'recorded date'}` : 'View your membership status and details.'}</span><span className="portal-card-arrow">→</span></button>
+          <button type="button" className="portal-card" onClick={() => onNavigate('GTi courses')}><span className="portal-card-icon"><GraduationCapIcon /></span><span className="portal-card-kicker">LEARNING</span><strong>GTi Courses</strong><span>Browse and manage your GTi courses.</span><span className="portal-card-arrow">→</span></button>
+          <button type="button" className="portal-card" onClick={accreditationCard.onClick}><span className="portal-card-icon"><BuildingIcon /></span><span className="portal-card-kicker">ACCREDITATION</span><strong>{accreditationCard.heading}</strong><span>{accreditationCard.body}</span><span className="portal-card-arrow">→</span></button>
+          <button type="button" className="portal-card" onClick={() => onNavigate('Insurance')}><span className="portal-card-icon"><ShieldIcon /></span><span className="portal-card-kicker">COMING SOON</span><strong>Insurance</strong><span>Explore insurance services available.</span><span className="portal-card-arrow">→</span></button>
         </div>
+        <AccountDetailsCard contact={contact} membership={membership} />
+        <MemberAnnouncement announcement={ANNOUNCEMENT} onNavigate={onNavigate} />
       </div>
     </>
   );
@@ -97,7 +241,117 @@ function PortalPlaceholder({ title }) {
   return <div className="acc-body" style={{ flexDirection: 'column', alignItems: 'stretch' }}><div className="portal-placeholder"><div className="portal-eyebrow">BEAUTY GUILD PORTAL</div><h1>{title}</h1><p>This area is being prepared for the next portal phase.</p></div></div>;
 }
 
-function MembershipPage({ membership, membershipError, onRetry, onAccreditation }) {
+// All of the applicant's documents (their membership's WorkDrive folder) - deliberately
+// not scoped to any one accreditation, unlike the Documents tab inside Manage School.
+function PortalDocuments({ contactId }) {
+  const fetchPage = (folderId) => fetchContactDocuments(contactId, folderId);
+  return (
+    <div className="acc-body portal-section-page">
+      <div className="portal-section-heading"><span className="portal-eyebrow">DOCUMENTS</span><h1>Your documents</h1></div>
+      <DocumentGrid fetchPage={fetchPage} deps={[contactId]} />
+    </div>
+  );
+}
+
+// Every invoice for this account (accreditation, additional venue, membership, ...) in one
+// list - deliberately not scoped to any one accreditation or membership, unlike the Invoices
+// tab inside Manage School or a membership's own detail page.
+function PortalInvoices({ contactId }) {
+  const [invoices, setInvoices] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    if (!contactId) return undefined;
+    fetchAccountInvoices(contactId)
+      .then((result) => { if (!cancelled) setInvoices(result); })
+      .catch((err) => { if (!cancelled) setError(err.message || 'Invoices could not be loaded.'); });
+    return () => { cancelled = true; };
+  }, [contactId]);
+  return (
+    <div className="acc-body portal-section-page">
+      <div className="portal-section-heading"><span className="portal-eyebrow">INVOICES</span><h1>Your invoices</h1></div>
+      {error && <div className="acc-warning"><div className="acc-warning-title">We couldn't load your invoices</div><div className="acc-warning-body">{error}</div></div>}
+      {invoices === null && !error ? (
+        <div className="portal-loading"><span className="acc-spinner" /> Loading your invoices…</div>
+      ) : invoices && !invoices.length ? (
+        <div className="school-empty"><strong>No invoices yet</strong><span>Invoices will appear here once raised.</span></div>
+      ) : invoices && invoices.length > 0 ? (
+        <TableShell><table className="acc-legacy-table">
+          <thead><tr><th>Invoice</th><th>Type</th><th>Date</th><th>Due</th><th>Amount</th><th>Status</th></tr></thead>
+          <tbody>
+            {invoices.map((inv) => (
+              <tr key={inv.id}>
+                <td><strong>#{inv.invoiceNumber}</strong></td>
+                <td>{inv.type || '–'}</td>
+                <td>{inv.invoiceDate || '–'}</td>
+                <td>{inv.dueDate || '–'}</td>
+                <td>{inv.amount != null ? `£${inv.amount.toFixed(2)}` : '–'}</td>
+                <td><InvoiceStatusBadge status={inv.status} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table></TableShell>
+      ) : null}
+    </div>
+  );
+}
+
+// Every Deal CRM has for this contact, not just the currently-active one - shown so a paid
+// quote stuck at "Awaiting Payment" (the Creator webhook that should move it to Active is
+// still being finished) is at least visible, rather than silently disappearing.
+function MembershipHistorySection({ contactId, onSelectMembership }) {
+  const [history, setHistory] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    if (!contactId) return undefined;
+    fetchMembershipHistory(contactId)
+      .then((memberships) => { if (!cancelled) setHistory(memberships); })
+      .catch((err) => { if (!cancelled) setError(err.message || 'Membership history could not be loaded.'); });
+    return () => { cancelled = true; };
+  }, [contactId]);
+  if (error) return <div className="acc-warning"><div className="acc-warning-title">We couldn't load your membership history</div><div className="acc-warning-body">{error}</div></div>;
+  if (!history) return <div className="portal-loading"><span className="acc-spinner" /> Checking your membership history…</div>;
+  if (!history.length) return null;
+  return (
+    <div className="portal-section-heading mq-history-section" style={{ marginTop: 32 }}>
+      <h2 style={{ marginBottom: 12 }}>Membership history</h2>
+      <TableShell><table className="acc-legacy-table">
+        <thead><tr><th>Membership</th><th>From</th><th>To</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          {history.map((entry) => (
+            <tr key={entry.dealId} className="acc-row-clickable" onClick={() => onSelectMembership(entry)}>
+              <td><strong>{entry.membershipType || 'Guild membership'}</strong>{entry.subscriptionType && <span className="membership-history-meta"> · {entry.subscriptionType}</span>}</td>
+              <td>{entry.startDate ? formatUkDate(entry.startDate) : '–'}</td>
+              <td>{entry.expiryDate ? formatUkDate(entry.expiryDate) : '–'}</td>
+              <td>{entry.amount != null ? `£${Number(entry.amount).toFixed(2)}` : '–'}</td>
+              <td><span className={`acc-status-badge${entry.stage === 'Active' ? '' : ' warning'}`}>{entry.stage || 'Unknown'}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table></TableShell>
+    </div>
+  );
+}
+
+function MembershipPage({ membership, membershipError, onRetry, onAccreditation, contactId, onSelectMembership }) {
+  // Bumped on every refresh so MembershipHistorySection (which fetches its own history on
+  // mount) remounts and refetches too - onRetry alone only re-checks the current membership
+  // decision, not the full history table below it.
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try { await onRetry(); } finally {
+      setHistoryRefreshKey((key) => key + 1);
+      setRefreshing(false);
+    }
+  };
+  const refreshButton = (
+    <button type="button" className="acc-btn-secondary portal-refresh-btn" onClick={handleRefresh} disabled={refreshing}>
+      {refreshing ? 'Refreshing…' : 'Refresh'}
+    </button>
+  );
   if (!membership) return <>
     <div className="acc-body portal-section-page">
       <div className="portal-section-heading"><span className="portal-eyebrow">YOUR MEMBERSHIP</span><h1>Membership details</h1></div>
@@ -107,25 +361,48 @@ function MembershipPage({ membership, membershipError, onRetry, onAccreditation 
     </div>
   </>;
   const active = membership?.membershipStatus === 'active';
+  // Matches the CRM reminder workflow's own criteria (Membership.Status = Active AND
+  // Expiry Date within the next 30 days) - the portal surfaces the same "renew soon" window
+  // that the reminder email is built around, rather than a separately-invented threshold.
+  const daysUntilExpiry = (() => {
+    if (!membership?.membershipExpiry) return null;
+    const expiry = new Date(`${membership.membershipExpiry}T00:00:00`);
+    if (Number.isNaN(expiry.getTime())) return null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return Math.round((expiry - today) / 86400000);
+  })();
+  const renewalDue = active && daysUntilExpiry !== null && daysUntilExpiry >= 0 && daysUntilExpiry <= 30;
   return <>
     <div className="acc-body portal-section-page">
-      <div className="portal-section-heading"><span className="portal-eyebrow">YOUR MEMBERSHIP</span><h1>Membership details</h1></div>
-      <section className="membership-page-panel">
-        <div>
+      <div className="portal-section-heading portal-section-heading-row"><div><span className="portal-eyebrow">YOUR MEMBERSHIP</span><h1>Membership details</h1></div>{refreshButton}</div>
+      <section
+        className="membership-page-panel"
+        data-membership-active={active ? 'true' : 'false'}
+        data-membership-expiry={membership.membershipExpiry || ''}
+        data-membership-renewal-due={renewalDue ? 'true' : 'false'}
+        data-membership-deal-id={membership.dealId || ''}
+        data-membership-level-id={membership.membershipLevelId || ''}
+        data-membership-branch-id={membership.primaryBranchId || ''}
+        data-membership-subscription-type={membership.subscriptionType || ''}
+      >
+        <div style={!active ? { gridColumn: '1 / -1' } : undefined}>
           <span className={`acc-status-badge${active ? '' : ' warning'}`}>{active ? 'Current' : 'No current membership'}</span>
-          <h2>{active ? `${membership.membershipType || 'Guild'} membership` : 'Associate membership'}</h2>
+          {renewalDue && <span className="acc-status-badge warning" style={{ marginLeft: 8 }}>Renews soon</span>}
+          <h2>{active ? `${membership.membershipType || 'Guild'} membership` : 'No membership yet'}</h2>
           <p>{active
-            ? `Your membership is current${membership.membershipExpiry ? ` until ${formatUkDate(membership.membershipExpiry)}` : ''}.`
-            : 'No current membership was found. Associate Membership will be included when required for a new accreditation.'}</p>
+            ? `Your membership is current${membership.membershipExpiry ? ` until ${formatUkDate(membership.membershipExpiry)}` : ''}.${renewalDue ? ' Renew now to keep your cover without a break.' : ''}`
+            : "You don't currently have a Guild membership. An Associate Membership will be included automatically if you start a new accreditation."}</p>
         </div>
-        <dl className="membership-detail-list">
-          <div><dt>Membership type</dt><dd>{active ? (membership.membershipType || 'Guild membership') : 'Not currently active'}</dd></div>
-          <div><dt>Status</dt><dd>{active ? 'Current' : 'Not current'}</dd></div>
-          <div><dt>Expiry date</dt><dd>{active ? (formatUkDate(membership.membershipExpiry) || 'Not recorded') : '—'}</dd></div>
-        </dl>
+        {active && (
+          <dl className="membership-detail-list">
+            <div><dt>Membership type</dt><dd>{membership.membershipType || 'Guild membership'}</dd></div>
+            <div><dt>Status</dt><dd>Current</dd></div>
+            <div><dt>Expiry date</dt><dd>{formatUkDate(membership.membershipExpiry) || 'Not recorded'}</dd></div>
+          </dl>
+        )}
       </section>
-      {!active && <div className="acc-info-note">Starting an accreditation will show the membership-inclusive price before you pay.</div>}
       <button type="button" className="acc-btn-primary membership-page-action" onClick={onAccreditation}>View accreditation options →</button>
+      <MembershipHistorySection key={historyRefreshKey} contactId={contactId} onSelectMembership={onSelectMembership} />
     </div>
   </>;
 }
@@ -137,9 +414,18 @@ export default function AccreditationApp() {
   const [acc, setAcc] = useState(initialAccState);
   const [modal, setModal] = useState(null);
   const [selectedSchool, setSelectedSchool] = useState(null);
+  const [selectedMembership, setSelectedMembership] = useState(null);
   const [manageInitialOption, setManageInitialOption] = useState(null);
-  const [drafts, setDrafts] = useState(() => loadDrafts());
+  // Bumped on every selectSchool() call and used as ManageSchool's React key below, so each
+  // explicit "jump to this section" (e.g. a sidebar sub-nav click) remounts it fresh rather
+  // than relying on the initialOption prop alone - ManageSchool doesn't otherwise unmount
+  // between two such jumps (the screen stays 'manage' both times), so its own activeOption
+  // state would silently ignore a changed - or re-picked - initialOption prop.
+  const [manageNavToken, setManageNavToken] = useState(0);
+  const [drafts, setDrafts] = useState([]);
   const [activeDraftId, setActiveDraftId] = useState(null);
+  const [discardTarget, setDiscardTarget] = useState(null);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
   const [activeDraftRefs, setActiveDraftRefs] = useState({ accountId: null, centreId: null, linkId: null });
   const [courses, setCourses] = useState(null);
   const [coursesError, setCoursesError] = useState(null);
@@ -155,6 +441,9 @@ export default function AccreditationApp() {
   const [pendingApplications, setPendingApplications] = useState([]);
   const [awaitingPaymentApplications, setAwaitingPaymentApplications] = useState([]);
   const [accreditationsError, setAccreditationsError] = useState(null);
+  // Guards the portal dashboard's Accreditation card against briefly flashing "Apply for
+  // Guild Accreditation" before the real accreditation status has loaded on a page refresh.
+  const [accreditationsLoaded, setAccreditationsLoaded] = useState(false);
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   // Set right after a fresh submission. Zoho CRM's search index can lag ~20-30s behind a
   // write, so the very next fetch (fired the instant "Go to your dashboard" is clicked) can
@@ -162,6 +451,14 @@ export default function AccreditationApp() {
   // than firing a single fetch that loses the race and looks like "not refreshing" to the user.
   const justSubmittedSchoolNameRef = useRef(null);
   const handledCatalystUserRef = useRef(null);
+  // On a page refresh, two independent identity checks race: the instant localStorage
+  // session restore, and the Catalyst SDK's own (slower) auth confirmation. Both used to
+  // force screen='portal' unconditionally on success, so whichever finished LAST would
+  // stomp on any navigation the user did in between - even 3-4 seconds later. This ref lets
+  // only the first of the two to actually resolve claim the initial navigation; the second
+  // is then just a redundant confirmation of the same login and must not touch the screen.
+  // Reset on logout so a later, genuine fresh sign-in can navigate again.
+  const initialPortalNavDoneRef = useRef(false);
   // Safety net for exactly one AccountStep mount right after an explicit logout: skips the
   // "already authenticated?" check so we never silently log back in while signOut()'s
   // redirect is still in flight - see the logout() comment below.
@@ -172,6 +469,7 @@ export default function AccreditationApp() {
   const [registerStage, setRegisterStage] = useState('account');
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [submittingAccred, setSubmittingAccred] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [membershipDecision, setMembershipDecision] = useState(null);
   const [checkingMembership, setCheckingMembership] = useState(false);
   const [membershipError, setMembershipError] = useState('');
@@ -183,11 +481,30 @@ export default function AccreditationApp() {
     new URLSearchParams(window.location.search).get('intent') === 'apply' ? 'apply' : 'login'
   ));
 
+  // Only the first of the two racing identity checks (see initialPortalNavDoneRef above)
+  // should navigate to the portal - returns false for every call after the first.
+  const claimInitialPortalNav = () => {
+    if (initialPortalNavDoneRef.current) return false;
+    initialPortalNavDoneRef.current = true;
+    return true;
+  };
+
+  // Re-scope local drafts to whoever is actually logged in - runs on login, on a different
+  // account logging in over the same one (id changes), and on logout (id goes null, so
+  // loadDrafts returns []). Without this, a draft saved by one account in this browser would
+  // otherwise keep showing up after a different account signs in on the same machine.
+  const loggedInContactId = loggedInContact && loggedInContact.id;
+  useEffect(() => {
+    setDrafts(loadDrafts(loggedInContactId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loggedInContactId]);
+
   const applyDashboardData = ({ accredited, drafts: crmDrafts, pending, awaitingPayment }) => {
     setAccreditedSchools((accredited || []).map(toSchoolCard));
-    setDrafts((crmDrafts || []).map(toDraftItem));
+    setDrafts((prevDrafts) => mergeCrmDrafts(prevDrafts, crmDrafts));
     setPendingApplications((pending || []).map(toPendingItem));
     setAwaitingPaymentApplications((awaitingPayment || []).map(toPendingItem));
+    setAccreditationsLoaded(true);
   };
 
   useEffect(() => {
@@ -196,6 +513,30 @@ export default function AccreditationApp() {
       .then((data) => { if (!cancelled) setCourses(data); })
       .catch((err) => { if (!cancelled) setCoursesError(err.message); });
     return () => { cancelled = true; };
+  }, []);
+
+
+  // Captures ?ref=<code> from a tutor invite link once the invitee lands back here after
+  // the Catalyst sign-up/activation round trip, so it's available later in this session.
+  useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get('ref');
+    if (ref) saveReferralCode(ref);
+  }, []);
+
+  // A real navigation away from the app (Stripe Checkout is the one place this happens -
+  // window.location.assign to checkout.stripe.com) followed by the browser's own Back
+  // button, rather than Stripe's own return redirect, can restore this exact tab from the
+  // back/forward cache instead of reloading it. That resurrects the in-memory wizard state
+  // exactly as it was before leaving - still pointed at the same activeDraftId/accreditation -
+  // so a user who believed they were starting a second, unrelated application would actually
+  // still be editing the first one. `pageshow` with `event.persisted` is the standard way to
+  // detect a bfcache restore; reloading guarantees a genuinely fresh state instead.
+  useEffect(() => {
+    const handlePageShow = (event) => {
+      if (event.persisted) window.location.reload();
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
   }, []);
 
   // Stand-in for a real shared session with WordPress: if this browser already resolved an
@@ -208,10 +549,12 @@ export default function AccreditationApp() {
   // unrecoverable "invalid Contact" error deep in accreditation/venue creation.
   useEffect(() => {
     const stored = loadSession();
-    if (!stored || !stored.email) return;
+    if (!stored || !stored.email) return undefined;
+    let cancelled = false;
     setCheckingIdentity(true);
     lookupContactByEmail(stored.email)
       .then(({ exists, contact }) => {
+        if (cancelled) return;
         if (!exists || !contact) {
           console.log('cached session contact no longer exists in CRM, clearing stale session');
           clearSession();
@@ -221,22 +564,28 @@ export default function AccreditationApp() {
         setLoggedInContact(contact);
         saveSession(contact);
         setIsLoggedIn(true);
-        setScreen('portal');
+        if (claimInitialPortalNav()) setScreen('portal');
         setCheckingIdentity(false);
         setMembershipError('');
-        resolveMembership(contact.id).then(setMembershipDecision).catch((err) => setMembershipError(err.message || 'Membership details could not be loaded.'));
+        resolveMembership(contact.id).then((decision) => { if (!cancelled) setMembershipDecision(decision); }).catch((err) => { if (!cancelled) setMembershipError(err.message || 'Membership details could not be loaded.'); });
         fetchAccreditations(contact.id)
-          .then(applyDashboardData)
+          .then((data) => { if (!cancelled) applyDashboardData(data); })
           .catch((err) => {
             console.log('accreditations lookup failed', err);
-            setAccreditationsError(err.message);
+            if (!cancelled) { setAccreditationsError(err.message); setAccreditationsLoaded(true); }
           });
       })
       .catch((err) => {
+        if (cancelled) return;
         console.log('cached session verification failed, clearing stale session', err);
         clearSession();
         setCheckingIdentity(false);
       });
+    // This only ever runs once per real mount - the cancellation guard exists purely so
+    // React StrictMode's dev-only double-invoke of this effect can't let its first, stale
+    // copy resolve later and stomp the screen back to "portal" over whatever the user has
+    // already navigated to in the meantime.
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -286,19 +635,58 @@ export default function AccreditationApp() {
     ot: v,
     tutQual: v === 'no' ? null : prev.tutQual,
     otN: v === 'no' ? '' : prev.otN,
+    tutors: v === 'no' ? [] : prev.tutors,
   }));
 
+  // Keeps acc.tutors in sync with the entered headcount - growing/shrinking the list rather
+  // than resetting it, so rows already filled in aren't lost if the count is nudged by one.
+  const setTutorCount = (value) => setAcc((prev) => {
+    const n = Number(value);
+    let tutors = prev.tutors;
+    if (Number.isInteger(n) && n >= 0) {
+      tutors = prev.tutors.slice(0, n);
+      while (tutors.length < n) tutors = [...tutors, { fname: '', surname: '', email: '' }];
+    }
+    return { ...prev, otN: value, tutors };
+  });
+
+  const setTutorField = (index, key, value) => setAcc((prev) => {
+    const tutors = prev.tutors.map((t, i) => (i === index ? { ...t, [key]: value } : t));
+    return { ...prev, tutors };
+  });
+
   const saveQuote = async () => {
+    // Without this, clicking "Save & finish later" twice in quick succession (or a slow
+    // network stretching out the first request) could fire two saves while activeDraftId was
+    // still null, each independently creating its own Account/Training Centre/draft - two
+    // duplicate applications from one save action, reported directly in UAT.
+    if (savingDraft) return;
     if (!loggedInContact?.id) {
       setModal({ title: 'Please log in first', body: 'You must be logged in before an application can be saved.' });
       return;
     }
+    setSavingDraft(true);
     try {
       const draft = await saveAccreditationDraft({
         contactId: loggedInContact.id,
         accreditationId: activeDraftId,
         ...activeDraftRefs,
         stepIndex,
+        // Your Details/Address (steps 2 & 4) belong to the Contact, not the draft - without
+        // sending them here they're never persisted anywhere, so resuming a draft (or even
+        // reaching final submit) would show them blank again even though the same session
+        // had them filled in.
+        phone: withDialCode(acc.phoneCode, acc.phone),
+        mobile: withDialCode(acc.mobileCode, acc.mobile),
+        address: {
+          addressLine1: acc.addr.l1,
+          addressLine2: acc.addr.l2,
+          addressLine3: acc.addr.l3,
+          town: acc.addr.town,
+          county: acc.addr.county,
+          country: acc.addr.country,
+          postcode: acc.addr.pc,
+        },
         school: {
           name: acc.sch.name,
           email: acc.sch.email,
@@ -314,15 +702,22 @@ export default function AccreditationApp() {
         },
         declarations: acc.decls.map((v) => v === 'yes' ? 'Yes' : v === 'no' ? 'No' : undefined),
         otherTutors: acc.ot === 'yes', numberOfTutors: acc.otN, tutorQualified: acc.tutQual === 'yes',
+        tutors: acc.ot === 'yes' ? acc.tutors : [],
         otherVenues: acc.ov === 'yes', courseIds: acc.courses, termsAccepted: acc.tob,
-        accreditationFee: ACCREDITATION_FEE, vatAmount: ACCREDITATION_VAT, totalQuoted: ACCREDITATION_GRAND_TOTAL,
+        ...(() => { const p = accreditationPricing(acc, false); return { accreditationFee: p.fee, vatAmount: p.vat, totalQuoted: p.baseTotal }; })(),
       });
       setActiveDraftId(draft.id);
       setActiveDraftRefs({ accountId: draft.accountId, centreId: draft.centreId, linkId: draft.linkId });
-      setDrafts(upsertDraft({ id: draft.id, crmId: draft.id, stepIndex, skippedAccount, acc, updatedAt: new Date().toISOString() }));
+      // `local: true` marks this as a draft this browser itself just saved, with its own
+      // full acc/refs already known - loadExistingApplication uses that to skip CRM entirely
+      // on resume, rather than re-fetching from /search endpoints that can lag a real write
+      // by up to ~20-30s and make a just-saved draft look like it lost its answers.
+      setDrafts(upsertDraft({ id: draft.id, crmId: draft.id, local: true, stepIndex, skippedAccount, acc, accountId: draft.accountId, centreId: draft.centreId, linkId: draft.linkId, contactId: loggedInContact && loggedInContact.id, updatedAt: new Date().toISOString() }));
       setModal({ title: 'Application saved', body: 'Your application has been saved as a draft. You can continue it from your dashboard.', saved: true });
     } catch (err) {
       setModal({ title: "Couldn't save application", body: err.message || 'Something went wrong. Please try again.' });
+    } finally {
+      setSavingDraft(false);
     }
   };
 
@@ -368,6 +763,30 @@ export default function AccreditationApp() {
     attempt(awaitedName ? 8 : 0);
   };
 
+  // Personal details (name, phone/mobile, home address) all live on the Contact, not on
+  // the draft/accreditation record - so both a brand-new application and a resumed draft
+  // need to pull them from the same place. Mutates target in place.
+  const applyContactBasics = (target, contact) => {
+    if (!contact) return;
+    target.email = contact.email || target.email;
+    if (contact.title) target.title = contact.title;
+    if (contact.firstName) target.fname = contact.firstName;
+    if (contact.lastName) target.surname = contact.lastName;
+    if (contact.phone) { const p = parseDialCode(contact.phone); target.phone = p.number; target.phoneCode = p.code; }
+    if (contact.mobile) { const m = parseDialCode(contact.mobile); target.mobile = m.number; target.mobileCode = m.code; }
+    target.interests = mergeInterestsWithTraining(contact.interests);
+    // Everything on the Address step comes from Correspondence_* on the Contact.
+    if (contact.addressLine1 || contact.town) {
+      target.addrLooked = true;
+      if (contact.addressLine1) target.addr.l1 = contact.addressLine1;
+      if (contact.addressLine2) target.addr.l2 = contact.addressLine2;
+      if (contact.postcode) target.addr.pc = contact.postcode;
+      if (contact.town) target.addr.town = contact.town;
+      if (contact.county) target.addr.county = contact.county;
+      if (contact.country) target.addr.country = contact.country;
+    }
+  };
+
   // Jumps straight into "Your details" (step 1), skipping the Account step - used both for the
   // dashboard's "Apply for new accreditation" button and for the WordPress "Apply Accreditation"
   // link once identity is known, so a returning member never re-answers the login step.
@@ -375,25 +794,7 @@ export default function AccreditationApp() {
     const fresh = initialAccState();
     setMembershipDecision(null);
     setMembershipError('');
-    if (contact) {
-      fresh.email = contact.email || '';
-      if (contact.title) fresh.title = contact.title;
-      if (contact.firstName) fresh.fname = contact.firstName;
-      if (contact.lastName) fresh.surname = contact.lastName;
-      if (contact.phone) { const p = parseDialCode(contact.phone); fresh.phone = p.number; fresh.phoneCode = p.code; }
-      if (contact.mobile) { const m = parseDialCode(contact.mobile); fresh.mobile = m.number; fresh.mobileCode = m.code; }
-      fresh.interests = mergeInterestsWithTraining(contact.interests);
-      // Everything on the Address step comes from Correspondence_* on the Contact.
-      if (contact.addressLine1 || contact.town) {
-        fresh.addrLooked = true;
-        if (contact.addressLine1) fresh.addr.l1 = contact.addressLine1;
-        if (contact.addressLine2) fresh.addr.l2 = contact.addressLine2;
-        if (contact.postcode) fresh.addr.pc = contact.postcode;
-        if (contact.town) fresh.addr.town = contact.town;
-        if (contact.county) fresh.addr.county = contact.county;
-        if (contact.country) fresh.addr.country = contact.country;
-      }
-    }
+    applyContactBasics(fresh, contact);
     setAcc(fresh);
     setActiveDraftId(null);
     setSkippedAccount(true);
@@ -409,6 +810,7 @@ export default function AccreditationApp() {
     // takes a moment, then hand off to Zoho to end the session and bring us back here.
     justLoggedOutRef.current = true;
     handledCatalystUserRef.current = null;
+    initialPortalNavDoneRef.current = false;
     clearSession();
     setIsLoggedIn(false);
     setLoggedInContact(null);
@@ -496,10 +898,39 @@ export default function AccreditationApp() {
   const selectSchool = (school, initialOption) => {
     setSelectedSchool(school);
     setManageInitialOption(initialOption || null);
+    setManageNavToken((value) => value + 1);
     setScreen('manage');
+  };
+  const selectMembership = (membership) => {
+    setSelectedMembership(membership);
+    setScreen('manage-membership');
   };
 
   const loadExistingApplication = (application, targetStep = null, errorTitle = "Couldn't open application") => {
+    // A draft this browser itself saved already has its own full, correct state cached in
+    // localStorage - use that directly rather than re-fetching from CRM. CRM's /search
+    // endpoints (the only way to find the linked Training Centre/course offerings/link, since
+    // none of them can be fetched by a single known id) can lag a real write by up to ~20-30s,
+    // which made a draft resumed shortly after being saved look like it had lost its answers,
+    // even though nothing was actually lost.
+    if (application.local && application.acc) {
+      // Shallow-spread alone would leave next.addr pointing at the same nested object still
+      // referenced by the cached draft - applyContactBasics writes into next.addr.*, which
+      // would otherwise silently mutate that cached copy too.
+      const next = { ...application.acc, addr: { ...application.acc.addr }, sch: { ...application.acc.sch } };
+      // Defense-in-depth: a draft cached before this placeholder-stripping was added (or one
+      // resumed from an older client build) could have the raw CRM placeholder baked into its
+      // cached school name - never show that internal value back to the applicant.
+      if (/^Draft application - /.test(next.sch.name || '')) next.sch.name = '';
+      applyContactBasics(next, loggedInContact);
+      setAcc(next);
+      setActiveDraftId(application.crmId || application.id);
+      setActiveDraftRefs({ accountId: application.accountId || null, centreId: application.centreId || null, linkId: application.linkId || null });
+      setSkippedAccount(true);
+      setStepIndex(targetStep == null ? (application.stepIndex || 1) : targetStep);
+      setScreen('wizard');
+      return;
+    }
     const load = async () => {
       try {
         const detail = await fetchAccreditationDraft(application.crmId || application.id, loggedInContact.id);
@@ -507,13 +938,18 @@ export default function AccreditationApp() {
         const centre = detail.centre || {};
         const yesNo = (value) => value === 'Yes' ? 'yes' : value === 'No' ? 'no' : undefined;
         const next = initialAccState();
-        next.mode = 'login'; next.email = loggedInContact.email || '';
-        next.title = loggedInContact.title || ''; next.fname = loggedInContact.firstName || ''; next.surname = loggedInContact.lastName || '';
-        next.interests = mergeInterestsWithTraining(loggedInContact.interests);
+        next.mode = 'login';
+        applyContactBasics(next, loggedInContact);
         next.decls = [record.Declaration_1_qualified_for_six_months, record.Declaration_2_teaching_qualification, record.Declaration_3_evidence_available].map(yesNo);
         next.courses = detail.courseIds || [];
-        next.schLooked = !!centre.Name;
-        next.sch = { ...next.sch, name: centre.Name || '', contact: [next.title, next.fname, next.surname].filter(Boolean).join(' '), email: centre.Email || next.email, phone: centre.Phone_Number || '', mobile: centre.Mobile_Phone_Number || '', l1: centre.Address_Line_1 || '', l2: centre.Address_Line_2 || '', l3: centre.Address_Line_3 || '', town: centre.Town || '', county: centre.County || '', country: centre.Country || 'United Kingdom', pc: centre.Postcode || '' };
+        // Before a school name is ever typed, the backend has to write *something* into the
+        // CRM Training Centre's (mandatory) Name field - "Draft application - <contactId>" -
+        // so a School Name box left blank must never show that internal placeholder back to
+        // the applicant.
+        const rawSchoolName = centre.Name || '';
+        const schoolName = /^Draft application - /.test(rawSchoolName) ? '' : rawSchoolName;
+        next.schLooked = !!schoolName;
+        next.sch = { ...next.sch, name: schoolName, contact: [next.title, next.fname, next.surname].filter(Boolean).join(' '), email: centre.Email || next.email, phone: centre.Phone_Number || '', mobile: centre.Mobile_Phone_Number || '', l1: centre.Address_Line_1 || '', l2: centre.Address_Line_2 || '', l3: centre.Address_Line_3 || '', town: centre.Town || '', county: centre.County || '', country: centre.Country || 'United Kingdom', pc: centre.Postcode || '' };
         next.ot = record.Other_Tutors_Used === true ? 'yes' : record.Other_Tutors_Used === false ? 'no' : null;
         next.otN = record.Number_of_Tutors || ''; next.tutQual = yesNo(record.Tutor_qualification_declaration_question);
         next.ov = record.Additional_Centres_Used === 'Yes' ? 'yes' : record.Additional_Centres_Used === 'No' ? 'no' : null;
@@ -529,9 +965,35 @@ export default function AccreditationApp() {
   const resumeDraft = (draft) => loadExistingApplication(draft);
   const openAwaitingPayment = (application) => loadExistingApplication(application, 9, "Couldn't open payment application");
 
-  const discardDraft = (id) => {
-    setDrafts(deleteDraft(id));
-    if (activeDraftId === id) setActiveDraftId(null);
+  const requestDiscardDraft = (id) => {
+    const draft = drafts.find((d) => d.id === id);
+    setDiscardTarget({ id, name: (draft && draft.acc.sch.name) || 'this application' });
+  };
+
+  const confirmDiscardDraft = async () => {
+    if (!discardTarget || discardingDraft) return;
+    setDiscardingDraft(true);
+    try {
+      await discardAccreditationDraft(discardTarget.id, loggedInContact.id);
+      setDrafts(deleteDraft(discardTarget.id, loggedInContact.id));
+      if (activeDraftId === discardTarget.id) setActiveDraftId(null);
+      setDiscardTarget(null);
+    } catch (err) {
+      // A 404 here means CRM's own record is already gone - most likely a draft carried
+      // over locally from before a CRM data reset elsewhere. There's nothing left to
+      // discard, so just clear it from view instead of blocking the user with an error
+      // about a record that, from their point of view, should already be gone.
+      if (err.status === 404) {
+        setDrafts(deleteDraft(discardTarget.id, loggedInContact.id));
+        if (activeDraftId === discardTarget.id) setActiveDraftId(null);
+        setDiscardTarget(null);
+      } else {
+        setModal({ title: "Couldn't discard application", body: err.message || 'Something went wrong. Please try again.' });
+        setDiscardTarget(null);
+      }
+    } finally {
+      setDiscardingDraft(false);
+    }
   };
 
   const goBack = () => {
@@ -583,6 +1045,7 @@ export default function AccreditationApp() {
         } catch (err) {
           console.log('accreditations lookup failed', err);
           setAccreditationsError(err.message);
+          setAccreditationsLoaded(true);
         }
       }
     } catch (err) {
@@ -604,7 +1067,7 @@ export default function AccreditationApp() {
           saveSession(createdContact);
           setCheckingIdentity(false);
           setIsLoggedIn(true);
-          setScreen('portal');
+          if (claimInitialPortalNav()) setScreen('portal');
           setMembershipError('');
           resolveMembership(createdContact.id).then(setMembershipDecision).catch((err) => setMembershipError(err.message || 'Membership details could not be loaded.'));
           return;
@@ -629,7 +1092,7 @@ export default function AccreditationApp() {
     saveSession(resolvedContact);
     setCheckingIdentity(false);
     setIsLoggedIn(true);
-    setScreen('portal');
+    if (claimInitialPortalNav()) setScreen('portal');
     setMembershipError('');
     resolveMembership(resolvedContact.id).then(setMembershipDecision).catch((err) => setMembershipError(err.message || 'Membership details could not be loaded.'));
     // The "Apply Accreditation" link should land directly in the wizard, not the dashboard.
@@ -652,6 +1115,10 @@ export default function AccreditationApp() {
   };
 
   const finishAccred = async () => {
+    // Already backstopped by the button's own disabled={submitting} in SummaryStep, but an
+    // explicit guard here too matches the same defence just added to saveQuote, rather than
+    // relying on the disabled attribute alone to win the race against a second click.
+    if (submittingAccred) return;
     setSubmittingAccred(true);
     let accreditation;
     try {
@@ -661,6 +1128,17 @@ export default function AccreditationApp() {
         accountId: activeDraftRefs.accountId,
         centreId: activeDraftRefs.centreId,
         linkId: activeDraftRefs.linkId,
+        phone: withDialCode(acc.phoneCode, acc.phone),
+        mobile: withDialCode(acc.mobileCode, acc.mobile),
+        address: {
+          addressLine1: acc.addr.l1,
+          addressLine2: acc.addr.l2,
+          addressLine3: acc.addr.l3,
+          town: acc.addr.town,
+          county: acc.addr.county,
+          country: acc.addr.country,
+          postcode: acc.addr.pc,
+        },
         school: {
           name: acc.sch.name,
           email: acc.sch.email,
@@ -678,12 +1156,14 @@ export default function AccreditationApp() {
         otherTutors: acc.ot === 'yes',
         numberOfTutors: acc.otN,
         tutorQualified: acc.tutQual === 'yes',
+        tutors: acc.ot === 'yes' ? acc.tutors : [],
         otherVenues: acc.ov === 'yes',
         courseIds: acc.courses,
         termsAccepted: acc.tob,
-        accreditationFee: ACCREDITATION_FEE,
-        vatAmount: ACCREDITATION_VAT,
-        totalQuoted: membershipDecision?.membershipRequired ? ACCREDITATION_WITH_MEMBERSHIP : ACCREDITATION_GRAND_TOTAL,
+        ...(() => {
+          const p = accreditationPricing(acc, !!membershipDecision?.membershipRequired);
+          return { accreditationFee: p.fee, vatAmount: p.vat, totalQuoted: p.total };
+        })(),
       });
       // Keep the CRM record identity before starting Stripe. If checkout fails or
       // the user retries, the next submission updates this record instead of creating
@@ -720,7 +1200,7 @@ export default function AccreditationApp() {
       }
       if (!checkout.checkoutUrl) throw new Error('Stripe did not return a checkout link. Your application is saved and you can retry payment from Accreditation.');
       if (activeDraftId) {
-        setDrafts(deleteDraft(activeDraftId));
+        setDrafts(deleteDraft(activeDraftId, loggedInContact && loggedInContact.id));
         setActiveDraftId(null);
       }
       justSubmittedSchoolNameRef.current = acc.sch.name;
@@ -787,9 +1267,19 @@ export default function AccreditationApp() {
   };
 
   const renderMain = () => {
-    if (isLoggedIn && screen === 'portal') return <PortalDashboard contact={loggedInContact} membership={membershipDecision} onAccreditation={goEntry} onNavigate={setScreen} />;
-    if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} />;
-    if (isLoggedIn && ['GTi courses', 'Insurance', 'My profile', 'Documents'].includes(screen)) return <PortalPlaceholder title={screen} />;
+    if (isLoggedIn && screen === 'portal') return (
+      <PortalDashboard
+        contact={loggedInContact} membership={membershipDecision} accreditationsLoaded={accreditationsLoaded}
+        drafts={drafts} pendingApplications={pendingApplications} awaitingPaymentApplications={awaitingPaymentApplications} accreditedSchools={accreditedSchools}
+        onAccreditation={goEntry} onResumeDraft={resumeDraft} onOpenAwaitingPayment={openAwaitingPayment}
+        onSelectQualifications={(item) => selectSchool(item, 'qualifications')} onStartNew={startApplyExisting}
+        onNavigate={setScreen}
+      />
+    );
+    if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} contactId={loggedInContact?.id} onSelectMembership={selectMembership} />;
+    if (isLoggedIn && screen === 'Documents') return <PortalDocuments contactId={loggedInContact?.id} />;
+    if (isLoggedIn && screen === 'Invoices') return <PortalInvoices contactId={loggedInContact?.id} />;
+    if (isLoggedIn && ['GTi courses', 'Insurance', 'My profile'].includes(screen)) return <PortalPlaceholder title={screen} />;
     if (!isLoggedIn && screen === 'entry') {
       // Register stages 2+ (Your Details, Home Address) - the pink banner persists, but the
       // rest of the screen is register-specific, not the Login/Register tab card.
@@ -808,7 +1298,7 @@ export default function AccreditationApp() {
             <div className="acc-body" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%' }}>
               <div className="acc-main-col">
                 <div style={{ textAlign: 'center' }}>
-                  <div className="acc-step-heading" style={{ color: '#E0007F' }}>
+                  <div className="acc-step-heading">
                     To start your Accreditation Application, please log into your account or register for a new account.
                   </div>
                 </div>
@@ -861,7 +1351,7 @@ export default function AccreditationApp() {
             onSelectSchool={selectSchool}
             drafts={drafts}
             onResumeDraft={resumeDraft}
-            onDiscardDraft={discardDraft}
+            onDiscardDraft={requestDiscardDraft}
             onOpenAwaitingPayment={openAwaitingPayment}
             accreditedSchools={accreditedSchools}
             pendingApplications={pendingApplications}
@@ -878,7 +1368,11 @@ export default function AccreditationApp() {
     }
 
     if (screen === 'manage') {
-      return <ManageSchool school={selectedSchool} initialOption={manageInitialOption} contactId={loggedInContact?.id} contact={loggedInContact} onBack={goEntry} />;
+      return <ManageSchool key={manageNavToken} school={selectedSchool} initialOption={manageInitialOption} contactId={loggedInContact?.id} contact={loggedInContact} onBack={goEntry} />;
+    }
+
+    if (screen === 'manage-membership') {
+      return <ManageMembership key={selectedMembership && selectedMembership.dealId} membership={selectedMembership} contactId={loggedInContact?.id} contactEmail={loggedInContact?.email} contactName={`${loggedInContact?.firstName || ''} ${loggedInContact?.lastName || ''}`.trim()} onBack={() => setScreen('Membership')} />;
     }
 
     if (screen === 'done') {
@@ -903,7 +1397,7 @@ export default function AccreditationApp() {
       <CoursesStep acc={acc} toggleCourse={toggleCourse} courses={courses} coursesError={coursesError} />,
       <SchoolStep acc={acc} setSchField={setSchField} setAccField={setAccField} copyCorrToSch={copyCorrToSch} onManualEntry={enterSchoolManually} />,
       <GeocodingStep acc={acc} setSchField={setSchField} />,
-      <TutorsVenuesStep acc={acc} setAccField={setAccField} onOtChange={onOtChange} />,
+      <TutorsVenuesStep acc={acc} setAccField={setAccField} onOtChange={onOtChange} setTutorCount={setTutorCount} setTutorField={setTutorField} />,
       <SummaryStep acc={acc} setAccField={setAccField} onPay={finishAccred} onSave={saveQuote} courses={courses} submitting={submittingAccred} checkingMembership={checkingMembership} membershipRequired={membershipDecision?.membershipRequired} membershipError={membershipError} onRetryMembership={retryMembershipCheck} />,
     ];
 
@@ -920,7 +1414,7 @@ export default function AccreditationApp() {
             <button type="button" className="acc-back-btn" onClick={goBack}>← {backLabel}</button>
             <div className="acc-footer-right">
               {!nextEnabled && <span className="acc-footer-guidance">Complete the required fields to continue.</span>}
-              {stepIndex >= 5 && <button type="button" className="acc-btn-secondary" onClick={saveQuote}>Save &amp; finish later</button>}
+              {stepIndex >= 5 && <button type="button" className="acc-btn-secondary" disabled={savingDraft} onClick={saveQuote}>{savingDraft ? 'Saving…' : 'Save & finish later'}</button>}
               <button type="button" className="acc-btn-primary" disabled={!nextEnabled} onClick={goNext}>{nextLabel}</button>
             </div>
           </div>
@@ -928,7 +1422,7 @@ export default function AccreditationApp() {
         {isLastStep && (
           <div className="acc-footer">
             <button type="button" className="acc-back-btn" onClick={goBack}>← {backLabel}</button>
-            <button type="button" className="acc-btn-secondary" onClick={saveQuote}>Save &amp; finish later</button>
+            <button type="button" className="acc-btn-secondary" disabled={savingDraft} onClick={saveQuote}>{savingDraft ? 'Saving…' : 'Save & finish later'}</button>
           </div>
         )}
       </>
@@ -945,18 +1439,30 @@ export default function AccreditationApp() {
             onDashboard={() => setScreen('portal')}
             onAccreditation={goEntry}
             onSection={(label) => setScreen(label === 'Dashboard' ? 'portal' : label)}
+            onManageSection={selectSchool}
+            accreditedSchools={accreditedSchools}
             activeItem={screen === 'portal'
               ? 'Dashboard'
               : ['entry', 'wizard', 'manage', 'done'].includes(screen)
                 ? 'Accreditation'
-                : screen}
+                : screen === 'manage-membership'
+                  ? 'Membership'
+                  : screen}
           />
         )}
         <div className="acc-main">
           {renderMain()}
+          {isLoggedIn && (
+            <MobileTabBar
+              activeItem={screen}
+              onSection={(label) => setScreen(label)}
+              onLogout={logout}
+            />
+          )}
         </div>
       </div>
       <Modal modal={modal} onClose={closeModal} />
+      <DiscardDraftConfirm target={discardTarget} discarding={discardingDraft} onCancel={() => setDiscardTarget(null)} onConfirm={confirmDiscardDraft} />
     </div>
   );
 }

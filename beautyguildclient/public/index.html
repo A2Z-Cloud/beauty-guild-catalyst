@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/beauty-guild-mark.svg" type="image/svg+xml" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#E0007F" />
+    <meta name="theme-color" content="#ee3e96" />
     <meta
       name="description"
       content="Beauty Guild member accreditation portal"
@@ -12,6 +12,14 @@
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/beauty-guild-mark.svg" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>Beauty Guild Member Portal</title>
+    <!-- Standalone "Get a membership quote" mini-app (see public/membership-quote.js) - loaded
+         unconditionally here so it also works under the dev server (catalyst serve / npm start),
+         which never runs the postbuild step below. In a production build, postbuild-membership-
+         quote.js additionally rewrites the main.js script tag into a conditional loader, so a
+         visit with ?membershipQuote=1 or ?membershipMock=1 renders only the mini-app, without
+         the main React app also mounting into #root. -->
+    <script defer src="%PUBLIC_URL%/membership-quote.js"></script>
+    <link href="%PUBLIC_URL%/membership-quote.css" rel="stylesheet" />
     <script src="https://static.zohocdn.com/catalyst/sdk/js/4.6.2/catalystWebSDK.js"></script>
     <script src="/__catalyst/sdk/init.js"></script>
     <style>
@@ -29,14 +37,14 @@
       #initial-loader .spinner {
         width: 34px;
         height: 34px;
-        border: 3px solid #EEECF4;
-        border-top-color: #E0007F;
+        border: 3px solid #faeaf2;
+        border-top-color: #ee3e96;
         border-radius: 50%;
         animation: initial-loader-spin 0.7s linear infinite;
       }
       #initial-loader .label {
         font-size: 14px;
-        color: #8A8598;
+        color: #000;
       }
       @keyframes initial-loader-spin {
         to { transform: rotate(360deg); }

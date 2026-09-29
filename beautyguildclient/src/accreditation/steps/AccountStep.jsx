@@ -41,8 +41,13 @@ export default function AccountStep({ onAuthenticated, authError, skipInitialAut
 
     const showLoginForm = () => {
       const redirectUrl = `${window.location.origin}/app/index.html${window.location.search || ''}`;
+      // Repaints the embedded widget's default blue (Next button, links, focus
+      // border) as brand pink - Catalyst's reference embeddediframe.css with our
+      // overrides appended after it, served from our own public/ folder.
+      const cssUrl = `${window.location.origin}/app/css/embeddediframe.css`;
       window.catalyst.auth.signIn('loginDivElementId', {
         service_url: redirectUrl,
+        css_url: cssUrl,
       });
       setSessionChecked(true);
     };
@@ -127,11 +132,11 @@ export default function AccountStep({ onAuthenticated, authError, skipInitialAut
   return (
     <div className="auth-page">
       <section className="auth-intro" aria-label="Beauty Guild member portal">
-        <div className="auth-brand"><img src="/app/beauty-guild-mark.svg" alt="" /><span>beautyguild</span></div>
+        <div className="auth-brand">beauty<span className="acc-wordmark-guild">guild</span></div>
         <div>
           <span className="portal-eyebrow">MEMBER PORTAL</span>
           <h1>Welcome to your Beauty Guild account</h1>
-          <p>Manage accreditation applications, qualifications and training centres from one secure place.</p>
+          <p>Manage your accreditation application, qualifications, courses, tutors and training centres from one secure place.</p>
         </div>
         <div className="auth-benefits" aria-label="Portal features"><span>Accreditation applications</span><span>Qualifications and centres</span><span>Secure member access</span></div>
       </section>

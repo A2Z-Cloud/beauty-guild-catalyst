@@ -1,6 +1,6 @@
 import React from 'react';
 import YesNo from '../components/YesNo';
-import { ACC_DECLARATIONS, DECLARATION_MESSAGES } from '../data';
+import { ACC_DECLARATIONS, DECLARATION_MESSAGES, ACC_DECLARATIONS_WARNING } from '../data';
 
 export default function DeclarationsStep({ acc, setDeclaration }) {
   const anyNo = acc.decls.some((v) => v === 'no');
@@ -21,11 +21,11 @@ export default function DeclarationsStep({ acc, setDeclaration }) {
                 <YesNo value={acc.decls[i]} onChange={(v) => setDeclaration(i, v)} />
               </div>
               {showMsg && (
-                <div style={{ border: '1.5px solid #E0007F', borderRadius: 10, padding: '13px 16px', margin: '10px 0 14px', fontSize: 13.5, lineHeight: 1.6, color: '#4A4760' }}>
+                <div style={{ border: '1.5px solid var(--brand-pink)', borderRadius: 10, padding: '13px 16px', margin: '10px 0 14px', fontSize: 13.5, lineHeight: 1.6, color: 'rgba(0,0,0,.62)' }}>
                   {msg.text}
                   {msg.linkText && (
                     <>
-                      <span style={{ color: '#E00879', fontWeight: 600, cursor: 'pointer' }}>{msg.linkText}</span>.
+                      <span style={{ color: 'var(--brand-pink)', fontWeight: 600, cursor: 'pointer' }}>{msg.linkText}</span>.
                     </>
                   )}
                 </div>
@@ -37,7 +37,7 @@ export default function DeclarationsStep({ acc, setDeclaration }) {
       {anyNo && (
         <div className="acc-warning">
           <div className="acc-warning-title">⚠ Unable to proceed</div>
-          <div className="acc-warning-body">All declarations must be confirmed as "Yes" to apply for GTi accreditation.</div>
+          <div className="acc-warning-body">{ACC_DECLARATIONS_WARNING}</div>
         </div>
       )}
     </>

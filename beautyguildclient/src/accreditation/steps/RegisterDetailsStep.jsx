@@ -17,40 +17,42 @@ export default function RegisterDetailsStep({ acc, setAccField, toggleInterest }
           </select>
         </div>
         <div className="acc-field">
-          <label>Forename</label>
+          <label>Forename *</label>
           <input
             className="acc-input"
             value={acc.fname}
             onChange={(e) => setAccField('fname', e.target.value)}
             onBlur={(e) => setAccField('fname', capitalizeFirst(e.target.value))}
+            placeholder="e.g. Sarah"
           />
         </div>
         <div className="acc-field">
-          <label>Surname</label>
+          <label>Surname *</label>
           <input
             className="acc-input"
             value={acc.surname}
             onChange={(e) => setAccField('surname', e.target.value)}
             onBlur={(e) => setAccField('surname', capitalizeFirst(e.target.value))}
+            placeholder="e.g. Jones"
           />
         </div>
         <div style={{ marginBottom: 14 }}>
           <PhoneField
-            label="Phone Number"
-            code={acc.phoneCode}
-            onCodeChange={(v) => setAccField('phoneCode', v)}
-            value={acc.phone}
-            onChange={(v) => setAccField('phone', v)}
-            placeholder="01332 000000"
+            label="Mobile *"
+            code={acc.mobileCode}
+            onCodeChange={(v) => setAccField('mobileCode', v)}
+            value={acc.mobile}
+            onChange={(v) => setAccField('mobile', v)}
+            placeholder="e.g. 07700 000000"
           />
         </div>
         <PhoneField
-          label="Mobile"
-          code={acc.mobileCode}
-          onCodeChange={(v) => setAccField('mobileCode', v)}
-          value={acc.mobile}
-          onChange={(v) => setAccField('mobile', v)}
-          placeholder="07700 000000"
+          label="Phone Number"
+          code={acc.phoneCode}
+          onCodeChange={(v) => setAccField('phoneCode', v)}
+          value={acc.phone}
+          onChange={(v) => setAccField('phone', v)}
+          placeholder="e.g. 01332 000000"
         />
       </div>
       <div className="acc-card">
