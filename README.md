@@ -140,5 +140,3 @@ git push -u origin main
 ```
 
 Replace `A2Z-Cloud` and `REPOSITORY_NAME` with the exact organisation and repository name confirmed by the organisation owner. Verify the remote with `git remote -v` before pushing.
-
-Test
