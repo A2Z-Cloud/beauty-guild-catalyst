@@ -1280,7 +1280,7 @@ export default function AccreditationApp() {
     if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} contactId={loggedInContact?.id} onSelectMembership={selectMembership} />;
     if (isLoggedIn && screen === 'Documents') return <PortalDocuments contactId={loggedInContact?.id} />;
     if (isLoggedIn && screen === 'Invoices') return <PortalInvoices contactId={loggedInContact?.id} />;
-    if (isLoggedIn && screen === 'Insurance') return <InsuranceApp contact={loggedInContact} />;
+    if (isLoggedIn && screen === 'Insurance') return <InsuranceApp contact={loggedInContact} onClose={() => setScreen('portal')} />;
     if (isLoggedIn && ['GTi courses', 'My profile'].includes(screen)) return <PortalPlaceholder title={screen} />;
     if (!isLoggedIn && screen === 'entry') {
       // Register stages 2+ (Your Details, Home Address) - the pink banner persists, but the

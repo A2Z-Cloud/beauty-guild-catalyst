@@ -245,7 +245,68 @@
 .insurance-button.primary { background: var(--insurance-pink); color: #fff; }
 .insurance-button.secondary { background: #fff; border: 1px solid #d8d3da; color: #231f25; }
 .insurance-button.link { background: transparent; color: var(--insurance-pink); }
+.insurance-button.danger { background: #8e2745; color: #fff; }
+.insurance-button:not(:disabled) { cursor: pointer; }
 .insurance-button:disabled { opacity: .45; cursor: not-allowed; }
+
+.insurance-manual-address { margin-top: 14px; }
+
+.insurance-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(24, 18, 35, .48);
+  backdrop-filter: blur(2px);
+}
+
+.insurance-modal {
+  position: relative;
+  width: min(440px, 100%);
+  padding: 28px;
+  border: 1px solid #e5e1e7;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 22px 60px rgba(24, 18, 35, .2);
+  animation: insurance-modal-in .18s ease-out both;
+}
+
+.insurance-modal h2 { margin: 14px 0 7px; font-size: 22px; }
+.insurance-modal p { margin: 0; color: rgba(0,0,0,.64); font-size: 13px; line-height: 1.6; }
+.insurance-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #ded9e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #686173;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.insurance-modal-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 20px;
+  font-weight: 800;
+}
+.insurance-modal-icon.saved { background: #eef7f0; color: #4f7455; }
+.insurance-modal-icon.warning,
+.insurance-modal-icon.error { background: #fff1f5; color: #8e2745; }
+.insurance-modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
+
+@keyframes insurance-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 .insurance-address-card .loqate-lookup { width: 100%; }
 .insurance-address-card .loqate-search-row { display: flex; gap: 8px; }
@@ -290,6 +351,12 @@
   .insurance-sidebar { border-left: 0; border-top: 1px solid #e9e7f1; }
   .insurance-grid-2, .insurance-choice-grid { grid-template-columns: 1fr; }
   .insurance-progress-item { font-size: 0; }
+  .insurance-modal-actions { flex-direction: column-reverse; }
+  .insurance-modal-actions .insurance-button { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insurance-modal { animation: none; }
 }
 
 .insurance-cover-row.locked { opacity: .55; }

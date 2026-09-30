@@ -8,6 +8,13 @@ import { loadInsuranceDraft, saveInsuranceDraft } from './drafts';
 
 const STEPS = ['About you', 'Your business', 'Your cover', 'Property', 'Important info', 'Your quote'];
 
+const TERRITORY_COUNTRIES = {
+  uk: 'United Kingdom',
+  ci: 'Channel Islands',
+  iom: 'Isle of Man',
+  other: '',
+};
+
 const DECLARATIONS = [
   'Have you had any insurance claims or losses that may be relevant to this cover?',
   'Have you been declared bankrupt, insolvent or subject to a similar financial event?',
@@ -20,17 +27,31 @@ const DECLARATIONS = [
 
 const initialAddress = { l1: '', l2: '', l3: '', town: '', county: '', postcode: '', country: 'United Kingdom', lookedUp: false };
 
+function territoryFromCountry(country = '') {
+  const normalized = country.trim().toLowerCase();
+  if (!normalized || normalized === 'united kingdom' || normalized === 'uk' || normalized === 'great britain') return 'uk';
+  if (normalized.includes('channel island') || normalized === 'jersey' || normalized === 'guernsey') return 'ci';
+  if (normalized === 'isle of man') return 'iom';
+  return 'other';
+}
+
+function isAddressComplete(address) {
+  return !!(address.l1.trim() && address.town.trim() && address.postcode.trim() && address.country.trim());
+}
+
 function initialState(contact) {
   const draftIdentity = contact?.email || null;
   const saved = draftIdentity ? loadInsuranceDraft(draftIdentity) : null;
   if (saved) return saved;
+  const territory = territoryFromCountry(contact?.country);
+  const country = contact?.country || TERRITORY_COUNTRIES[territory];
   return {
     step: 0,
     email: contact?.email || '',
     firstName: contact?.firstName || '',
     lastName: contact?.lastName || '',
     phone: contact?.mobile || contact?.phone || '',
-    territory: 'uk',
+    territory,
     address: {
       ...initialAddress,
       l1: contact?.addressLine1 || '',
@@ -38,8 +59,8 @@ function initialState(contact) {
       town: contact?.town || '',
       county: contact?.county || '',
       postcode: contact?.postcode || '',
-      country: contact?.country || 'United Kingdom',
-      lookedUp: !!(contact?.addressLine1 || contact?.town),
+      country,
+      lookedUp: territory !== 'uk' || !!(contact?.addressLine1 || contact?.town),
     },
     workingFromHome: false,
     mobile: false,
@@ -81,7 +102,7 @@ function initialState(contact) {
     biDebts: 10000,
     propertyAwayCover: false,
     propertyAwaySI: 2000,
-    premisesAddress: { ...initialAddress },
+    premisesAddress: { ...initialAddress, country, lookedUp: territory !== 'uk' },
     floodHistory: 'no',
     basement: 'no',
     subsidenceHistory: 'no',
@@ -108,39 +129,49 @@ function YesNo({ value, onChange }) {
   </div>;
 }
 
-function AddressBlock({ address, onChange, label = 'Address' }) {
+function AddressBlock({ address, onChange, label = 'Address', manualOnly = false }) {
   const set = (key, value) => onChange({ ...address, [key]: value });
   return <div className="insurance-panel insurance-address-card">
-    <div className="insurance-field">
-      <label>{label} postcode or start typing the address</label>
-      <LoqateAddressLookup
-        value={address.postcode}
-        onChange={(value) => set('postcode', value)}
-        onSelect={(result) => onChange({
-          ...address,
-          l1: result.addressLine1 || '',
-          l2: result.addressLine2 || '',
-          l3: result.addressLine3 || '',
-          town: result.town || '',
-          county: result.county || '',
-          postcode: result.postcode || '',
-          country: result.country || 'United Kingdom',
-          lookedUp: true,
-        })}
-      />
-    </div>
-    {!address.lookedUp && <button type="button" className="insurance-button link" onClick={() => set('lookedUp', true)}>Can't find the address? Enter it manually</button>}
-    {address.lookedUp && <div className="insurance-grid-2">
+    {!manualOnly && <>
+      <div className="insurance-field">
+        <label>{label} postcode or start typing the address</label>
+        <LoqateAddressLookup
+          value={address.postcode}
+          onChange={(value) => set('postcode', value)}
+          onSelect={(result) => onChange({
+            ...address,
+            l1: result.addressLine1 || '',
+            l2: result.addressLine2 || '',
+            l3: result.addressLine3 || '',
+            town: result.town || '',
+            county: result.county || '',
+            postcode: result.postcode || '',
+            country: result.country || 'United Kingdom',
+            lookedUp: true,
+          })}
+        />
+      </div>
+      {!address.lookedUp && <button type="button" className="insurance-button link" onClick={() => set('lookedUp', true)}>Can't find the address? Enter it manually</button>}
+    </>}
+    {manualOnly && <div className="insurance-inline warn">UK address lookup is unavailable for this territory. Enter the full address manually.</div>}
+    {(manualOnly || address.lookedUp) && <div className="insurance-grid-2 insurance-manual-address">
       <div className="insurance-field"><label>Address line 1</label><input className="insurance-input" value={address.l1} onChange={(e) => set('l1', e.target.value)} /></div>
       <div className="insurance-field"><label>Address line 2</label><input className="insurance-input" value={address.l2} onChange={(e) => set('l2', e.target.value)} /></div>
       <div className="insurance-field"><label>Town / city</label><input className="insurance-input" value={address.town} onChange={(e) => set('town', e.target.value)} /></div>
       <div className="insurance-field"><label>County</label><input className="insurance-input" value={address.county} onChange={(e) => set('county', e.target.value)} /></div>
-      <div className="insurance-field"><label>Postcode</label><input className="insurance-input" value={address.postcode} onChange={(e) => set('postcode', e.target.value.toUpperCase())} /></div>
+      <div className="insurance-field"><label>Postcode</label><input className="insurance-input" value={address.postcode} onChange={(e) => set('postcode', manualOnly ? e.target.value : e.target.value.toUpperCase())} /></div>
+      <div className="insurance-field"><label>Country</label><input className="insurance-input" value={address.country} onChange={(e) => set('country', e.target.value)} /></div>
     </div>}
   </div>;
 }
 
 function AboutStep({ state, setField }) {
+  const changeTerritory = (territory) => {
+    const country = TERRITORY_COUNTRIES[territory];
+    setField('territory', territory);
+    setField('address', { ...initialAddress, country, lookedUp: territory !== 'uk' });
+    setField('premisesAddress', { ...initialAddress, country, lookedUp: territory !== 'uk' });
+  };
   return <>
     <div className="insurance-step-heading">
       <div className="insurance-eyebrow">ABOUT YOU</div>
@@ -152,13 +183,13 @@ function AboutStep({ state, setField }) {
       <div className="insurance-field"><label>Phone number</label><input className="insurance-input" value={state.phone} onChange={(e) => setField('phone', e.target.value)} /></div>
       <div className="insurance-field"><label>First name</label><input className="insurance-input" value={state.firstName} onChange={(e) => setField('firstName', e.target.value)} /></div>
       <div className="insurance-field"><label>Last name</label><input className="insurance-input" value={state.lastName} onChange={(e) => setField('lastName', e.target.value)} /></div>
-      <div className="insurance-field"><label>Country / territory</label><select className="insurance-select" value={state.territory} onChange={(e) => setField('territory', e.target.value)}><option value="uk">United Kingdom</option><option value="ci">Channel Islands</option><option value="iom">Isle of Man</option><option value="other">Other</option></select></div>
+      <div className="insurance-field"><label>Country / territory</label><select className="insurance-select" value={state.territory} onChange={(e) => changeTerritory(e.target.value)}><option value="uk">United Kingdom</option><option value="ci">Channel Islands</option><option value="iom">Isle of Man</option><option value="other">Other</option></select></div>
     </div>
     <div className="insurance-inline ok">
       <strong>Your Beauty Guild account is part of this journey.</strong><br />
       We'll use your email to match an existing account or create the portal account you need to save and return to your quotation.
     </div>
-    <div className="insurance-section"><AddressBlock address={state.address} onChange={(value) => setField('address', value)} label="Home" /></div>
+    <div className="insurance-section"><AddressBlock address={state.address} onChange={(value) => setField('address', value)} label="Home" manualOnly={state.territory !== 'uk'} /></div>
   </>;
 }
 
@@ -262,7 +293,7 @@ function NonSalonCover({ state, setField }) {
             {state.standardConstruction === 'no' && <div className="insurance-field"><label>Is more than 15% non-standard construction?</label><select className="insurance-select" value={state.nonStandardOver15} onChange={(e) => setField('nonStandardOver15', e.target.value)}><option value="no">No</option><option value="yes">Yes</option></select></div>}
             <div className="insurance-field"><label>Do you need cover for multiple addresses?</label><select className="insurance-select" value={state.multipleAddresses} onChange={(e) => setField('multipleAddresses', e.target.value)}><option value="no">No</option><option value="yes">Yes</option></select></div>
           </div>
-          <AddressBlock address={state.premisesAddress} onChange={(value) => setField('premisesAddress', value)} label="Business" />
+          <AddressBlock address={state.premisesAddress} onChange={(value) => setField('premisesAddress', value)} label="Business" manualOnly={state.territory !== 'uk'} />
         </>}
       </div>
     </div>
@@ -310,7 +341,7 @@ function SalonCover({ state, setField }) {
 function PropertyStep({ state, setField }) {
   return <>
     <div className="insurance-step-heading"><div className="insurance-eyebrow">PROPERTY DETAILS</div><h2>Tell us about your premises</h2><p>We'll use these details, including your postcode, to check whether the property can be quoted online or needs review by the Insurance team.</p></div>
-    <AddressBlock address={state.premisesAddress} onChange={(value) => setField('premisesAddress', value)} label="Premises" />
+    <AddressBlock address={state.premisesAddress} onChange={(value) => setField('premisesAddress', value)} label="Premises" manualOnly={state.territory !== 'uk'} />
     <div className="insurance-grid-2 insurance-section">
       <div className="insurance-field"><label>Has the property previously suffered flooding?</label><select className="insurance-select" value={state.floodHistory} onChange={(e) => setField('floodHistory', e.target.value)}><option value="no">No</option><option value="yes">Yes</option></select></div>
       <div className="insurance-field"><label>Does the property have a basement?</label><select className="insurance-select" value={state.basement} onChange={(e) => setField('basement', e.target.value)}><option value="no">No</option><option value="yes">Yes</option></select></div>
@@ -409,16 +440,48 @@ function QuoteStep({ state, quote, ruleResult, setField }) {
   </>;
 }
 
+function ExitModal({ mode, publicEntry, onDismiss, onExit }) {
+  if (!mode) return null;
+
+  const saved = mode === 'saved';
+  const failed = mode === 'error';
+  const close = saved ? onExit : onDismiss;
+  const title = saved ? 'Quotation saved' : failed ? "We couldn't save your quotation" : 'Exit without saving?';
+  const body = saved
+    ? 'Your progress has been saved on this device. You can continue the quotation when you return.'
+    : failed
+      ? 'Your progress could not be saved on this device. Please continue editing and try again.'
+      : 'You have unsaved changes. If you exit now, those changes will be lost.';
+
+  return <div className="insurance-modal-overlay" role="presentation" onClick={close}>
+    <div className="insurance-modal" role="dialog" aria-modal="true" aria-labelledby="insurance-exit-title" onClick={(event) => event.stopPropagation()}>
+      <button type="button" className="insurance-modal-close" aria-label="Close" onClick={close}>×</button>
+      <div className={`insurance-modal-icon ${saved ? 'saved' : failed ? 'error' : 'warning'}`} aria-hidden="true">{saved ? '✓' : '!'}</div>
+      <h2 id="insurance-exit-title">{title}</h2>
+      <p>{body}</p>
+      <div className="insurance-modal-actions">
+        {!saved && <button type="button" className="insurance-button secondary" onClick={onDismiss}>{failed ? 'Close' : 'Continue editing'}</button>}
+        {!failed && <button type="button" className={`insurance-button ${saved ? 'primary' : 'danger'}`} onClick={onExit}>{saved ? (publicEntry ? 'Return to member login' : 'Return to dashboard') : 'Exit without saving'}</button>}
+      </div>
+    </div>
+  </div>;
+}
+
 export default function InsuranceApp({ contact = null, publicEntry = false, onClose }) {
   const [state, setState] = useState(() => initialState(contact));
-  const setField = (key, value) => setState((prev) => ({ ...prev, [key]: value }));
+  const [isDirty, setIsDirty] = useState(false);
+  const [exitModal, setExitModal] = useState(null);
+  const setField = (key, value) => {
+    setIsDirty(true);
+    setState((prev) => ({ ...prev, [key]: value }));
+  };
   const quote = useMemo(() => calculateInsuranceQuote(state), [state]);
   const ruleResult = useMemo(() => evaluateInsuranceRules(state), [state]);
   const propertyRequired = state.route === 'salon' && (state.contents || state.moneyCover || state.buildingsCover || state.biCover || state.propertyAwayCover);
 
   const canContinue = () => {
     if (ruleResult.stop.length) return false;
-    if (state.step === 0) return !!(state.email && state.firstName && state.lastName);
+    if (state.step === 0) return !!(state.email && state.firstName && state.lastName && isAddressComplete(state.address));
     if (state.step === 1) return state.workingFromHome || state.mobile || state.rentedRoom || state.subcontractor || state.salon;
     if (state.step === 2 && state.treatmentExtensions.length) return !!(state.qualifiedForTreatments && state.patchTesting);
     if (state.step === 4) return state.declarations.every(Boolean)
@@ -431,8 +494,8 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
 
   const go = (next) => {
     let target = next;
-    if (target === 3 && !propertyRequired) target = 4;
     if (target === 3 && state.step === 4 && !propertyRequired) target = 2;
+    else if (target === 3 && !propertyRequired) target = 4;
     setField('step', Math.max(0, Math.min(5, target)));
   };
 
@@ -448,9 +511,25 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     go(state.step + 1);
   };
 
-  const save = () => {
-    saveInsuranceDraft(state, contact?.email || state.email || 'public');
-    window.alert('Your quotation progress has been saved on this device.');
+  const exitJourney = () => {
+    setExitModal(null);
+    if (onClose) onClose();
+    else window.location.assign(window.location.pathname);
+  };
+
+  const saveAndExit = () => {
+    const saved = saveInsuranceDraft(state, contact?.email || state.email || 'public');
+    if (!saved) {
+      setExitModal('error');
+      return;
+    }
+    setIsDirty(false);
+    setExitModal('saved');
+  };
+
+  const cancelJourney = () => {
+    if (isDirty) setExitModal('cancel');
+    else exitJourney();
   };
 
   const stepComponent = [
@@ -470,7 +549,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
       <ExternalLinks includeTreatments />
     </div>
     <div className="insurance-shell">
-      <div className="insurance-head"><div><div className="insurance-eyebrow">INSURANCE QUOTATION</div><h2>{STEPS[state.step]}</h2></div><button type="button" className="insurance-button link" onClick={save}>Save & exit</button></div>
+      <div className="insurance-head"><div><div className="insurance-eyebrow">INSURANCE QUOTATION</div><h2>{STEPS[state.step]}</h2></div><button type="button" className="insurance-button link" disabled={!contact?.email && !state.email.trim()} title={!contact?.email && !state.email.trim() ? 'Enter your email address before saving.' : undefined} onClick={saveAndExit}>Save & exit</button></div>
       <div className="insurance-progress">{STEPS.map((label, index) => <div key={label} className={`insurance-progress-item ${index === state.step ? 'active' : ''} ${index < state.step ? 'complete' : ''}`}>{index + 1}. {label}</div>)}</div>
       <div className="insurance-workspace">
         <div className="insurance-content">{stepComponent}</div>
@@ -485,13 +564,14 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
         </aside>
       </div>
       <div className="insurance-actions">
-        <div><button type="button" className="insurance-button secondary" disabled={state.step === 0} onClick={() => go(state.step - 1)}>← Back</button></div>
+        <div><button type="button" className="insurance-button secondary" onClick={state.step === 0 ? cancelJourney : () => go(state.step - 1)}>{state.step === 0 ? 'Cancel' : '← Back'}</button></div>
         <div>
           {state.step < 5 ? <button type="button" className="insurance-button primary" disabled={!canContinue()} onClick={continueForward}>Continue →</button> :
             <button type="button" className="insurance-button primary" disabled={ruleResult.overall !== RULE_STATUS.PASS} onClick={() => window.alert('The payment step will open here in the completed journey.')}>Continue to payment →</button>}
         </div>
       </div>
     </div>
+    <ExitModal mode={exitModal} publicEntry={publicEntry} onDismiss={() => setExitModal(null)} onExit={exitJourney} />
   </>;
 
   if (publicEntry) return <div className="insurance-public-shell insurance-root"><div className="insurance-public-header"><div className="insurance-wordmark">beauty<span>guild</span></div><button className="insurance-button secondary" type="button" onClick={() => window.location.assign(window.location.pathname)}>Member login</button></div><main className="insurance-page">{inner}</main></div>;
