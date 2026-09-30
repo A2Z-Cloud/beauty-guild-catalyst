@@ -21,7 +21,8 @@ const DECLARATIONS = [
 const initialAddress = { l1: '', l2: '', l3: '', town: '', county: '', postcode: '', country: 'United Kingdom', lookedUp: false };
 
 function initialState(contact) {
-  const saved = loadInsuranceDraft();
+  const draftIdentity = contact?.email || 'public';
+  const saved = loadInsuranceDraft(draftIdentity);
   if (saved) return saved;
   return {
     step: 0,
@@ -201,6 +202,10 @@ function CoverStep({ state, setField }) {
       <div className="insurance-price">{corePrice == null ? 'Review' : `£${corePrice.toFixed(2)}`}</div>
     </div>
     <ExternalLinks includeTreatments />
+    <div className="insurance-doc-row">
+      <div><strong>Medical Malpractice Policy Wording</strong><small>WorkDrive document placeholder · MEDMAL_WORDING</small></div>
+      <button type="button" className="insurance-button secondary" onClick={() => window.alert('This policy wording will open from WorkDrive once document mapping is connected.')}>View / Download</button>
+    </div>
 
     <div className="insurance-cover-row">
       <div className="insurance-cover-row-header"><div><h3>Named employee / subcontractor cover</h3><p>Separate cover for people working in your business.</p></div><YesNo value={state.namedPeopleCover ? 'yes' : 'no'} onChange={(v) => setBool('namedPeopleCover', v)} /></div>
@@ -365,7 +370,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
   };
 
   const save = () => {
-    saveInsuranceDraft(state);
+    saveInsuranceDraft(state, contact?.email || 'public');
     window.alert('Insurance quotation progress saved in this browser for the current frontend phase.');
   };
 
