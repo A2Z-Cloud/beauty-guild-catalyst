@@ -291,3 +291,5 @@
   .insurance-grid-2, .insurance-choice-grid { grid-template-columns: 1fr; }
   .insurance-progress-item { font-size: 0; }
 }
+
+.insurance-cover-row.locked { opacity: .55; }
