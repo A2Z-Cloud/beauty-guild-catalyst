@@ -436,6 +436,18 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     setField('step', Math.max(0, Math.min(5, target)));
   };
 
+  const continueForward = () => {
+    if (state.step === 0 && publicEntry && !contact?.email && state.email) {
+      const saved = loadInsuranceDraft(state.email);
+      const sameEmail = saved?.email?.trim().toLowerCase() === state.email.trim().toLowerCase();
+      if (sameEmail && Number(saved.step) > 0) {
+        setState(saved);
+        return;
+      }
+    }
+    go(state.step + 1);
+  };
+
   const save = () => {
     saveInsuranceDraft(state, contact?.email || state.email || 'public');
     window.alert('Your quotation progress has been saved on this device.');
@@ -475,7 +487,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
       <div className="insurance-actions">
         <div><button type="button" className="insurance-button secondary" disabled={state.step === 0} onClick={() => go(state.step - 1)}>← Back</button></div>
         <div>
-          {state.step < 5 ? <button type="button" className="insurance-button primary" disabled={!canContinue()} onClick={() => go(state.step + 1)}>Continue →</button> :
+          {state.step < 5 ? <button type="button" className="insurance-button primary" disabled={!canContinue()} onClick={continueForward}>Continue →</button> :
             <button type="button" className="insurance-button primary" disabled={ruleResult.overall !== RULE_STATUS.PASS} onClick={() => window.alert('The payment step will open here in the completed journey.')}>Continue to payment →</button>}
         </div>
       </div>
