@@ -198,7 +198,7 @@ function AccountDetailsCard({ contact, membership }) {
   const items = [
     { label: 'Member name', value: memberName || 'Not recorded' },
     { label: 'Membership type', value: active ? (membership.membershipType || 'Guild membership') : 'No current membership' },
-    { label: 'Insurance status', value: 'Coming soon' },
+    { label: 'Insurance status', value: 'Quotation service available' },
     { label: 'Expiry date', value: active ? (formatUkDate(membership.membershipExpiry) || 'Not recorded') : '—' },
   ];
   return (
@@ -229,7 +229,7 @@ function PortalDashboard({ contact, membership, accreditationsLoaded, drafts, pe
           <button type="button" className="portal-card" onClick={() => onNavigate('Membership')}><span className="portal-card-icon"><PersonIcon /></span><span className="portal-card-kicker">MEMBERSHIP</span><strong>{membership?.membershipStatus === 'active' ? `${membership.membershipType || 'Guild'} Membership` : 'Guild Membership'}</strong><span>{membership?.membershipStatus === 'active' ? `Valid until ${formatUkDate(membership.membershipExpiry) || 'recorded date'}` : 'View your membership status and details.'}</span><span className="portal-card-arrow">→</span></button>
           <button type="button" className="portal-card" onClick={() => onNavigate('GTi courses')}><span className="portal-card-icon"><GraduationCapIcon /></span><span className="portal-card-kicker">LEARNING</span><strong>GTi Courses</strong><span>Browse and manage your GTi courses.</span><span className="portal-card-arrow">→</span></button>
           <button type="button" className="portal-card" onClick={accreditationCard.onClick}><span className="portal-card-icon"><BuildingIcon /></span><span className="portal-card-kicker">ACCREDITATION</span><strong>{accreditationCard.heading}</strong><span>{accreditationCard.body}</span><span className="portal-card-arrow">→</span></button>
-          <button type="button" className="portal-card" onClick={() => onNavigate('Insurance')}><span className="portal-card-icon"><ShieldIcon /></span><span className="portal-card-kicker">COMING SOON</span><strong>Insurance</strong><span>Explore insurance services available.</span><span className="portal-card-arrow">→</span></button>
+          <button type="button" className="portal-card" onClick={() => onNavigate('Insurance')}><span className="portal-card-icon"><ShieldIcon /></span><span className="portal-card-kicker">INSURANCE</span><strong>Get an insurance quote</strong><span>Build or continue your Beauty Guild insurance quotation.</span><span className="portal-card-arrow">→</span></button>
         </div>
         <AccountDetailsCard contact={contact} membership={membership} />
         <MemberAnnouncement announcement={ANNOUNCEMENT} onNavigate={onNavigate} />
