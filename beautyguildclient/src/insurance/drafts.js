@@ -1,8 +1,13 @@
-const KEY = 'beautyGuildInsuranceDraftV1';
+const PREFIX = 'beautyGuildInsuranceDraftV1';
 
-export function loadInsuranceDraft() {
+function key(identity) {
+  const safeIdentity = (identity || 'public').trim().toLowerCase();
+  return `${PREFIX}:${safeIdentity}`;
+}
+
+export function loadInsuranceDraft(identity) {
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = window.localStorage.getItem(key(identity));
     return raw ? JSON.parse(raw) : null;
   } catch (err) {
     console.log('insurance draft load failed', err);
@@ -10,9 +15,9 @@ export function loadInsuranceDraft() {
   }
 }
 
-export function saveInsuranceDraft(state) {
+export function saveInsuranceDraft(state, identity) {
   try {
-    window.localStorage.setItem(KEY, JSON.stringify({ ...state, savedAt: new Date().toISOString() }));
+    window.localStorage.setItem(key(identity), JSON.stringify({ ...state, savedAt: new Date().toISOString() }));
     return true;
   } catch (err) {
     console.log('insurance draft save failed', err);
@@ -20,9 +25,9 @@ export function saveInsuranceDraft(state) {
   }
 }
 
-export function clearInsuranceDraft() {
+export function clearInsuranceDraft(identity) {
   try {
-    window.localStorage.removeItem(KEY);
+    window.localStorage.removeItem(key(identity));
   } catch (err) {
     console.log('insurance draft clear failed', err);
   }
