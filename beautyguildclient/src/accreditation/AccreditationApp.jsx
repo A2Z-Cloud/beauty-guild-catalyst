@@ -28,6 +28,7 @@ import { loadDrafts, upsertDraft, deleteDraft } from './drafts';
 import { loadSession, saveSession, clearSession, saveReferralCode } from './session';
 import { fetchActiveCourses, lookupContactByEmail, fetchAccreditations, fetchAccreditationDraft, saveAccreditationDraft, discardAccreditationDraft, createContact, submitAccreditation, resolveMembership, createCheckoutSession, fetchContactDocuments, fetchMembershipHistory, fetchAccountInvoices } from './api';
 import { DocumentGrid } from './documents';
+import InsuranceApp from '../insurance/InsuranceApp';
 
 const STEP_NEXT_LABEL = { 8: 'Review and pay →' };
 
@@ -197,7 +198,7 @@ function AccountDetailsCard({ contact, membership }) {
   const items = [
     { label: 'Member name', value: memberName || 'Not recorded' },
     { label: 'Membership type', value: active ? (membership.membershipType || 'Guild membership') : 'No current membership' },
-    { label: 'Insurance status', value: 'Coming soon' },
+    { label: 'Insurance status', value: 'Quotation service available' },
     { label: 'Expiry date', value: active ? (formatUkDate(membership.membershipExpiry) || 'Not recorded') : '—' },
   ];
   return (
@@ -228,7 +229,7 @@ function PortalDashboard({ contact, membership, accreditationsLoaded, drafts, pe
           <button type="button" className="portal-card" onClick={() => onNavigate('Membership')}><span className="portal-card-icon"><PersonIcon /></span><span className="portal-card-kicker">MEMBERSHIP</span><strong>{membership?.membershipStatus === 'active' ? `${membership.membershipType || 'Guild'} Membership` : 'Guild Membership'}</strong><span>{membership?.membershipStatus === 'active' ? `Valid until ${formatUkDate(membership.membershipExpiry) || 'recorded date'}` : 'View your membership status and details.'}</span><span className="portal-card-arrow">→</span></button>
           <button type="button" className="portal-card" onClick={() => onNavigate('GTi courses')}><span className="portal-card-icon"><GraduationCapIcon /></span><span className="portal-card-kicker">LEARNING</span><strong>GTi Courses</strong><span>Browse and manage your GTi courses.</span><span className="portal-card-arrow">→</span></button>
           <button type="button" className="portal-card" onClick={accreditationCard.onClick}><span className="portal-card-icon"><BuildingIcon /></span><span className="portal-card-kicker">ACCREDITATION</span><strong>{accreditationCard.heading}</strong><span>{accreditationCard.body}</span><span className="portal-card-arrow">→</span></button>
-          <button type="button" className="portal-card" onClick={() => onNavigate('Insurance')}><span className="portal-card-icon"><ShieldIcon /></span><span className="portal-card-kicker">COMING SOON</span><strong>Insurance</strong><span>Explore insurance services available.</span><span className="portal-card-arrow">→</span></button>
+          <button type="button" className="portal-card" onClick={() => onNavigate('Insurance')}><span className="portal-card-icon"><ShieldIcon /></span><span className="portal-card-kicker">INSURANCE</span><strong>Get an insurance quote</strong><span>Build or continue your Beauty Guild insurance quotation.</span><span className="portal-card-arrow">→</span></button>
         </div>
         <AccountDetailsCard contact={contact} membership={membership} />
         <MemberAnnouncement announcement={ANNOUNCEMENT} onNavigate={onNavigate} />
@@ -1279,7 +1280,8 @@ export default function AccreditationApp() {
     if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} contactId={loggedInContact?.id} onSelectMembership={selectMembership} />;
     if (isLoggedIn && screen === 'Documents') return <PortalDocuments contactId={loggedInContact?.id} />;
     if (isLoggedIn && screen === 'Invoices') return <PortalInvoices contactId={loggedInContact?.id} />;
-    if (isLoggedIn && ['GTi courses', 'Insurance', 'My profile'].includes(screen)) return <PortalPlaceholder title={screen} />;
+    if (isLoggedIn && screen === 'Insurance') return <InsuranceApp contact={loggedInContact} />;
+    if (isLoggedIn && ['GTi courses', 'My profile'].includes(screen)) return <PortalPlaceholder title={screen} />;
     if (!isLoggedIn && screen === 'entry') {
       // Register stages 2+ (Your Details, Home Address) - the pink banner persists, but the
       // rest of the screen is register-specific, not the Login/Register tab card.
