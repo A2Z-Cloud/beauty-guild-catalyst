@@ -79,6 +79,19 @@ export function evaluateInsuranceRules(state) {
     }
   }
 
+  if (state.informationAccurate === 'no') {
+    results.push(result(RULE_STATUS.STOP, 'INFORMATION_ACCURACY', 'The information provided must be confirmed as complete and accurate before continuing.'));
+  }
+  if (state.ethicsAccepted === 'no') {
+    results.push(result(RULE_STATUS.STOP, 'CODE_OF_ETHICS', 'The Beauty Guild Code of Ethics must be accepted before continuing.'));
+  }
+  if (state.demandsNeedsAccepted === 'no') {
+    results.push(result(RULE_STATUS.STOP, 'DEMANDS_AND_NEEDS', 'The demands and needs confirmation must be accepted before continuing.'));
+  }
+  if (state.nonAdvisedAccepted === 'no') {
+    results.push(result(RULE_STATUS.STOP, 'NON_ADVISED_SALE', 'The non-advised sale confirmation must be accepted before continuing.'));
+  }
+
   const expectedDeclarationAnswers = ['no','no','no','no','no','yes','yes'];
   (state.declarations || []).forEach((answer, index) => {
     if (answer && answer !== expectedDeclarationAnswers[index]) {
