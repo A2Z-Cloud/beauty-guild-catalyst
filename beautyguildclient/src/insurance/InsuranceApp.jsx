@@ -148,6 +148,10 @@ function AboutStep({ state, setField }) {
       <div className="insurance-field"><label>Last name</label><input className="insurance-input" value={state.lastName} onChange={(e) => setField('lastName', e.target.value)} /></div>
       <div className="insurance-field"><label>Country / territory</label><select className="insurance-select" value={state.territory} onChange={(e) => setField('territory', e.target.value)}><option value="uk">United Kingdom</option><option value="ci">Channel Islands</option><option value="iom">Isle of Man</option><option value="other">Other</option></select></div>
     </div>
+    <div className="insurance-inline ok">
+      <strong>Your Beauty Guild account is part of this journey.</strong><br />
+      When the backend phase is connected, this email will be matched to an existing Beauty Guild identity or used to create the portal account needed to save and return to the quotation. We will not ask the customer to decide which applies.
+    </div>
     <div className="insurance-section"><AddressBlock address={state.address} onChange={(value) => setField('address', value)} label="Home" /></div>
   </>;
 }
@@ -322,7 +326,7 @@ function DeclarationStep({ state, setField }) {
   </>;
 }
 
-function QuoteStep({ state, quote, ruleResult }) {
+function QuoteStep({ state, quote, ruleResult, setField }) {
   const docs = getQuoteDocuments(state);
   if (ruleResult.overall !== RULE_STATUS.PASS) return <div className={`insurance-inline ${ruleResult.overall === RULE_STATUS.STOP ? 'stop' : 'warn'}`}>
     <strong>{ruleResult.overall === RULE_STATUS.STOP ? 'We cannot complete this quotation online.' : 'We need to review some details.'}</strong>
@@ -337,6 +341,21 @@ function QuoteStep({ state, quote, ruleResult }) {
       <div className="insurance-summary-row"><span>Insurance Premium Tax (12%)</span><strong>£{quote.ipt.toFixed(2)}</strong></div>
       <div className="insurance-summary-row"><span><strong>Total</strong></span><strong>£{quote.total.toFixed(2)}</strong></div>
     </div>
+
+    <div className="insurance-section">
+      <div className="insurance-section-title"><h3>How would you like to pay?</h3><span>Monthly is currently annual total ÷ 12</span></div>
+      <div className="insurance-choice-grid">
+        <label className={`insurance-choice ${state.paymentFrequency === 'annual' ? 'selected' : ''}`}>
+          <input type="radio" name="insurancePaymentFrequency" checked={state.paymentFrequency === 'annual'} onChange={() => setField('paymentFrequency', 'annual')} />
+          <span><strong>Pay annually</strong><small>£{quote.total.toFixed(2)} per year</small></span>
+        </label>
+        <label className={`insurance-choice ${state.paymentFrequency === 'monthly' ? 'selected' : ''}`}>
+          <input type="radio" name="insurancePaymentFrequency" checked={state.paymentFrequency === 'monthly'} onChange={() => setField('paymentFrequency', 'monthly')} />
+          <span><strong>Pay monthly</strong><small>£{quote.monthly.toFixed(2)} per month</small></span>
+        </label>
+      </div>
+    </div>
+
     <div className="insurance-section">
       <div className="insurance-section-title"><h3>Your policy documents</h3><span>WorkDrive mapping comes next</span></div>
       {docs.map((doc) => <div className="insurance-doc-row" key={doc.code}><div><strong>{doc.name}</strong><small>{doc.code}</small></div><button type="button" className="insurance-button secondary" onClick={() => window.alert('WorkDrive document mapping will be connected in the backend phase.')}>View / Download</button></div>)}
@@ -380,7 +399,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     <CoverStep state={state} setField={setField} />,
     <PropertyStep state={state} setField={setField} />,
     <DeclarationStep state={state} setField={setField} />,
-    <QuoteStep state={state} quote={quote} ruleResult={ruleResult} />,
+    <QuoteStep state={state} quote={quote} ruleResult={ruleResult} setField={setField} />,
   ][state.step];
 
   const inner = <>
