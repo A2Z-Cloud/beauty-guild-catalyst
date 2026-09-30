@@ -139,7 +139,7 @@ function AboutStep({ state, setField }) {
     <div className="insurance-step-heading">
       <div className="insurance-eyebrow">ABOUT YOU</div>
       <h2>Let's start with your details</h2>
-      <p>Use your usual email address. Existing Beauty Guild identities will be resolved automatically when the backend connection is enabled; new customers will be onboarded as part of the journey.</p>
+      <p>Use your usual email address. We'll use it to match your Beauty Guild account or create one as part of the quotation journey.</p>
     </div>
     <div className="insurance-grid-2">
       <div className="insurance-field"><label>Email address</label><input className="insurance-input" type="email" value={state.email} onChange={(e) => setField('email', e.target.value)} /></div>
@@ -150,7 +150,7 @@ function AboutStep({ state, setField }) {
     </div>
     <div className="insurance-inline ok">
       <strong>Your Beauty Guild account is part of this journey.</strong><br />
-      When the backend phase is connected, this email will be matched to an existing Beauty Guild identity or used to create the portal account needed to save and return to the quotation. We will not ask the customer to decide which applies.
+      We'll use your email to match an existing account or create the portal account you need to save and return to your quotation.
     </div>
     <div className="insurance-section"><AddressBlock address={state.address} onChange={(value) => setField('address', value)} label="Home" /></div>
   </>;
@@ -207,8 +207,8 @@ function CoverStep({ state, setField }) {
     </div>
     <ExternalLinks includeTreatments />
     <div className="insurance-doc-row">
-      <div><strong>Medical Malpractice Policy Wording</strong><small>WorkDrive document placeholder · MEDMAL_WORDING</small></div>
-      <button type="button" className="insurance-button secondary" onClick={() => window.alert('This policy wording will open from WorkDrive once document mapping is connected.')}>View / Download</button>
+      <div><strong>Medical Malpractice Policy Wording</strong><small>Policy wording</small></div>
+      <button type="button" className="insurance-button secondary" onClick={() => window.alert('The policy wording will open here in the live journey.')}>View / Download</button>
     </div>
 
     <div className="insurance-cover-row">
@@ -303,7 +303,7 @@ function SalonCover({ state, setField }) {
 
 function PropertyStep({ state, setField }) {
   return <>
-    <div className="insurance-step-heading"><div className="insurance-eyebrow">PROPERTY DETAILS</div><h2>Tell us about your premises</h2><p>These answers feed the underwriting result. The production service will also check the flood and subsidence postcode exception datasets behind the scenes.</p></div>
+    <div className="insurance-step-heading"><div className="insurance-eyebrow">PROPERTY DETAILS</div><h2>Tell us about your premises</h2><p>We'll use these details, including your postcode, to check whether the property can be quoted online or needs review by the Insurance team.</p></div>
     <AddressBlock address={state.premisesAddress} onChange={(value) => setField('premisesAddress', value)} label="Premises" />
     <div className="insurance-grid-2 insurance-section">
       <div className="insurance-field"><label>Has the property previously suffered flooding?</label><select className="insurance-select" value={state.floodHistory} onChange={(e) => setField('floodHistory', e.target.value)}><option value="no">No</option><option value="yes">Yes</option></select></div>
@@ -357,8 +357,8 @@ function QuoteStep({ state, quote, ruleResult, setField }) {
     </div>
 
     <div className="insurance-section">
-      <div className="insurance-section-title"><h3>Your policy documents</h3><span>WorkDrive mapping comes next</span></div>
-      {docs.map((doc) => <div className="insurance-doc-row" key={doc.code}><div><strong>{doc.name}</strong><small>{doc.code}</small></div><button type="button" className="insurance-button secondary" onClick={() => window.alert('WorkDrive document mapping will be connected in the backend phase.')}>View / Download</button></div>)}
+      <div className="insurance-section-title"><h3>Your policy documents</h3><span>Included with this quotation</span></div>
+      {docs.map((doc) => <div className="insurance-doc-row" key={doc.code}><div><strong>{doc.name}</strong><small>Policy wording</small></div><button type="button" className="insurance-button secondary" onClick={() => window.alert('This document will open here in the live journey.')}>View / Download</button></div>)}
     </div>
     <div className="insurance-section">
       <div className="insurance-section-title"><h3>Generated after purchase</h3><span>Customer-specific documents</span></div>
@@ -375,8 +375,10 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
   const propertyRequired = state.route === 'salon' && (state.contents || state.moneyCover || state.buildingsCover || state.biCover || state.propertyAwayCover);
 
   const canContinue = () => {
+    if (ruleResult.stop.length) return false;
     if (state.step === 0) return !!(state.email && state.firstName && state.lastName);
     if (state.step === 1) return state.workingFromHome || state.mobile || state.rentedRoom || state.subcontractor || state.salon;
+    if (state.step === 2 && state.treatmentExtensions.length) return !!(state.qualifiedForTreatments && state.patchTesting);
     if (state.step === 4) return state.declarations.every(Boolean);
     return true;
   };
@@ -390,7 +392,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
 
   const save = () => {
     saveInsuranceDraft(state, contact?.email || 'public');
-    window.alert('Insurance quotation progress saved in this browser for the current frontend phase.');
+    window.alert('Your quotation progress has been saved on this device.');
   };
 
   const stepComponent = [
@@ -420,7 +422,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
           <small>£{quote.monthly.toFixed(2)} monthly equivalent</small>
           <div style={{ marginTop: 14 }}>{quote.rows.map((row) => <div className="insurance-summary-row" key={row.code}><span>{row.label}</span><strong>£{row.premium.toFixed(2)}</strong></div>)}</div>
           <div className={`insurance-inline ${ruleResult.overall === RULE_STATUS.PASS ? 'ok' : ruleResult.overall === RULE_STATUS.REFER ? 'warn' : 'stop'}`}>
-            {ruleResult.overall === RULE_STATUS.PASS ? 'No current referral rule is triggered.' : ruleResult.overall === RULE_STATUS.REFER ? 'This quotation currently needs Insurance team review.' : 'A current answer prevents an online quotation.'}
+            {ruleResult.overall === RULE_STATUS.PASS ? 'Your quotation can currently continue online.' : ruleResult.overall === RULE_STATUS.REFER ? 'Some details will need review before we can confirm your quotation.' : 'We cannot continue this quotation online with the current details.'}
           </div>
         </aside>
       </div>
@@ -428,7 +430,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
         <div><button type="button" className="insurance-button secondary" disabled={state.step === 0} onClick={() => go(state.step - 1)}>← Back</button></div>
         <div>
           {state.step < 5 ? <button type="button" className="insurance-button primary" disabled={!canContinue()} onClick={() => go(state.step + 1)}>Continue →</button> :
-            <button type="button" className="insurance-button primary" disabled={ruleResult.overall !== RULE_STATUS.PASS} onClick={() => window.alert('Payment integration is intentionally deferred from this frontend build.')}>Continue to payment →</button>}
+            <button type="button" className="insurance-button primary" disabled={ruleResult.overall !== RULE_STATUS.PASS} onClick={() => window.alert('The payment step will open here in the completed journey.')}>Continue to payment →</button>}
         </div>
       </div>
     </div>
