@@ -28,6 +28,7 @@ import { loadDrafts, upsertDraft, deleteDraft } from './drafts';
 import { loadSession, saveSession, clearSession, saveReferralCode } from './session';
 import { fetchActiveCourses, lookupContactByEmail, fetchAccreditations, fetchAccreditationDraft, saveAccreditationDraft, discardAccreditationDraft, createContact, submitAccreditation, resolveMembership, createCheckoutSession, fetchContactDocuments, fetchMembershipHistory, fetchAccountInvoices } from './api';
 import { DocumentGrid } from './documents';
+import InsuranceApp from '../insurance/InsuranceApp';
 
 const STEP_NEXT_LABEL = { 8: 'Review and pay →' };
 
@@ -1279,7 +1280,8 @@ export default function AccreditationApp() {
     if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} contactId={loggedInContact?.id} onSelectMembership={selectMembership} />;
     if (isLoggedIn && screen === 'Documents') return <PortalDocuments contactId={loggedInContact?.id} />;
     if (isLoggedIn && screen === 'Invoices') return <PortalInvoices contactId={loggedInContact?.id} />;
-    if (isLoggedIn && ['GTi courses', 'Insurance', 'My profile'].includes(screen)) return <PortalPlaceholder title={screen} />;
+    if (isLoggedIn && screen === 'Insurance') return <InsuranceApp contact={loggedInContact} />;
+    if (isLoggedIn && ['GTi courses', 'My profile'].includes(screen)) return <PortalPlaceholder title={screen} />;
     if (!isLoggedIn && screen === 'entry') {
       // Register stages 2+ (Your Details, Home Address) - the pink banner persists, but the
       // rest of the screen is register-specific, not the Login/Register tab card.
