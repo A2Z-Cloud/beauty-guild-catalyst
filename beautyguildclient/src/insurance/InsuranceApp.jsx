@@ -21,8 +21,8 @@ const DECLARATIONS = [
 const initialAddress = { l1: '', l2: '', l3: '', town: '', county: '', postcode: '', country: 'United Kingdom', lookedUp: false };
 
 function initialState(contact) {
-  const draftIdentity = contact?.email || 'public';
-  const saved = loadInsuranceDraft(draftIdentity);
+  const draftIdentity = contact?.email || null;
+  const saved = draftIdentity ? loadInsuranceDraft(draftIdentity) : null;
   if (saved) return saved;
   return {
     step: 0,
@@ -86,6 +86,10 @@ function initialState(contact) {
     basement: 'no',
     subsidenceHistory: 'no',
     declarations: Array(7).fill(null),
+    informationAccurate: null,
+    ethicsAccepted: null,
+    demandsNeedsAccepted: null,
+    nonAdvisedAccepted: null,
     paymentFrequency: 'annual',
   };
 }
@@ -125,11 +129,13 @@ function AddressBlock({ address, onChange, label = 'Address' }) {
         })}
       />
     </div>
+    {!address.lookedUp && <button type="button" className="insurance-button link" onClick={() => set('lookedUp', true)}>Can't find the address? Enter it manually</button>}
     {address.lookedUp && <div className="insurance-grid-2">
       <div className="insurance-field"><label>Address line 1</label><input className="insurance-input" value={address.l1} onChange={(e) => set('l1', e.target.value)} /></div>
       <div className="insurance-field"><label>Address line 2</label><input className="insurance-input" value={address.l2} onChange={(e) => set('l2', e.target.value)} /></div>
       <div className="insurance-field"><label>Town / city</label><input className="insurance-input" value={address.town} onChange={(e) => set('town', e.target.value)} /></div>
       <div className="insurance-field"><label>County</label><input className="insurance-input" value={address.county} onChange={(e) => set('county', e.target.value)} /></div>
+      <div className="insurance-field"><label>Postcode</label><input className="insurance-input" value={address.postcode} onChange={(e) => set('postcode', e.target.value.toUpperCase())} /></div>
     </div>}
   </div>;
 }
@@ -317,11 +323,47 @@ function DeclarationStep({ state, setField }) {
   const setDeclaration = (index, value) => {
     const next = [...state.declarations]; next[index] = value; setField('declarations', next);
   };
+
+  const selectedCoverLabels = [
+    state.route === 'salon' ? 'Salon Medical Malpractice' : 'Medical Malpractice',
+    state.namedPeopleCover ? 'named employee/subcontractor cover' : null,
+    state.treatmentExtensions.length ? 'additional treatment extensions' : null,
+    state.teachingCover !== 'none' ? 'teaching cover' : null,
+    state.route === 'non_salon' && Number(state.equipmentTier) > 0 ? 'business equipment' : null,
+    state.route === 'non_salon' && state.nonSalonEL ? "Employers' Liability" : null,
+    state.route === 'salon' && state.salonEL ? "Employers' Liability" : null,
+    state.route === 'salon' && state.contents ? 'Contents' : null,
+    state.route === 'salon' && state.moneyCover ? 'Money' : null,
+    state.route === 'salon' && state.buildingsCover ? 'Buildings' : null,
+    state.route === 'salon' && state.biCover ? 'Business Interruption' : null,
+    state.route === 'salon' && state.propertyAwayCover ? 'Property Away' : null,
+  ].filter(Boolean);
+
   return <>
-    <div className="insurance-step-heading"><div className="insurance-eyebrow">IMPORTANT INFORMATION</div><h2>Please answer these questions carefully</h2><p>Answers that need underwriting review will be captured without exposing internal rule codes to the customer.</p></div>
+    <div className="insurance-step-heading"><div className="insurance-eyebrow">IMPORTANT INFORMATION</div><h2>Please answer these questions carefully</h2><p>Some answers may mean the Insurance team needs to review the quotation before cover can be confirmed.</p></div>
     <ExternalLinks includeEthics />
     <div className="insurance-section">
       {DECLARATIONS.map((question, index) => <div className="insurance-cover-row" key={question}><div className="insurance-cover-row-header"><div><h3>{question}</h3></div><YesNo value={state.declarations[index]} onChange={(v) => setDeclaration(index, v)} /></div></div>)}
+    </div>
+
+    <div className="insurance-section">
+      <div className="insurance-section-title"><h3>Final confirmations</h3><span>Required before quotation completion</span></div>
+
+      <div className="insurance-cover-row">
+        <div className="insurance-cover-row-header"><div><h3>I confirm the information provided is complete and accurate.</h3><p>Incorrect or misleading information may affect or invalidate cover.</p></div><YesNo value={state.informationAccurate} onChange={(v) => setField('informationAccurate', v)} /></div>
+      </div>
+
+      <div className="insurance-cover-row">
+        <div className="insurance-cover-row-header"><div><h3>I agree to comply with the Beauty Guild Code of Ethics.</h3><p><a className="insurance-link" href={INSURANCE_LINKS.ethics.href} target="_blank" rel="noreferrer">View Code of Ethics</a></p></div><YesNo value={state.ethicsAccepted} onChange={(v) => setField('ethicsAccepted', v)} /></div>
+      </div>
+
+      <div className="insurance-cover-row">
+        <div className="insurance-cover-row-header"><div><h3>Demands and needs</h3><p>This quotation has been built for the cover selected: {selectedCoverLabels.join(', ')}.</p></div><YesNo value={state.demandsNeedsAccepted} onChange={(v) => setField('demandsNeedsAccepted', v)} /></div>
+      </div>
+
+      <div className="insurance-cover-row">
+        <div className="insurance-cover-row-header"><div><h3>I understand this is a non-advised sale.</h3><p>No personal recommendation has been made about whether the selected insurance is suitable for me.</p></div><YesNo value={state.nonAdvisedAccepted} onChange={(v) => setField('nonAdvisedAccepted', v)} /></div>
+      </div>
     </div>
   </>;
 }
@@ -379,7 +421,11 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     if (state.step === 0) return !!(state.email && state.firstName && state.lastName);
     if (state.step === 1) return state.workingFromHome || state.mobile || state.rentedRoom || state.subcontractor || state.salon;
     if (state.step === 2 && state.treatmentExtensions.length) return !!(state.qualifiedForTreatments && state.patchTesting);
-    if (state.step === 4) return state.declarations.every(Boolean);
+    if (state.step === 4) return state.declarations.every(Boolean)
+      && state.informationAccurate === 'yes'
+      && state.ethicsAccepted === 'yes'
+      && state.demandsNeedsAccepted === 'yes'
+      && state.nonAdvisedAccepted === 'yes';
     return true;
   };
 
@@ -391,7 +437,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
   };
 
   const save = () => {
-    saveInsuranceDraft(state, contact?.email || 'public');
+    saveInsuranceDraft(state, contact?.email || state.email || 'public');
     window.alert('Your quotation progress has been saved on this device.');
   };
 
