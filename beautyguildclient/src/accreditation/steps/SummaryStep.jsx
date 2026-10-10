@@ -18,7 +18,7 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
   // Runs to the day before the anniversary of the start date (e.g. 1 Sept 26 - 31 Aug 27),
   // not the exact same calendar date a year later.
   const validTo = (() => { const d = new Date(today); d.setFullYear(d.getFullYear() + 1); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
-  const { international, fee, vat, baseTotal, total, membershipPriceTbc } = accreditationPricing(acc, membershipRequired === true);
+  const { international, fee, vat, baseTotal, total } = accreditationPricing(acc, membershipRequired === true);
   const associateMembershipFee = total - baseTotal;
   const pricingReady = typeof membershipRequired === 'boolean' && !checkingMembership;
 
@@ -103,7 +103,7 @@ export default function SummaryStep({ acc, setAccField, onPay, onSave, courses, 
         <div className="acc-summary-cost-note">{vat > 0 ? `Includes ${f2(fee)} fee and ${f2(vat)} VAT` : `${f2(fee)} fee - VAT not applicable to international accreditations`}</div>
         {membershipRequired === true && <div className="acc-summary-cost-row">
           <span style={{ color: 'rgba(0,0,0,.62)' }}>{international ? 'International Membership' : 'Associate Membership'}</span>
-          <span style={{ fontWeight: 700 }}>{membershipPriceTbc ? 'Confirmed by our team' : f2(associateMembershipFee)}</span>
+          <span style={{ fontWeight: 700 }}>{f2(associateMembershipFee)}</span>
         </div>}
         <div className="acc-grand-total" style={{ padding: '10px 0 0', fontSize: 16 }}>
           <span>Grand Total</span>

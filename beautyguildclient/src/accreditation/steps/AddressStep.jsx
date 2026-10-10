@@ -2,13 +2,16 @@ import React from 'react';
 import { COUNTRIES, countryOptionLabel, capitalizeFirst } from '../data';
 import LoqateAddressLookup from '../components/LoqateAddressLookup';
 
-export default function AddressStep({ acc, setAddrField, setAccField }) {
+export default function AddressStep({ acc, setAddrField, setAccField, showErrors }) {
   const addr = acc.addr;
   const isUK = addr.country === 'United Kingdom';
   // Non-UK addresses have no postcode-lookup equivalent here, so the manual fields show
   // immediately rather than waiting for an "enter manually" click that only makes sense
   // for the UK/Loqate flow.
   const showManualFields = !isUK || acc.addrLooked;
+  const l1Missing = showErrors && !addr.l1;
+  const townMissing = showErrors && !addr.town;
+  const pcMissing = showErrors && isUK && !addr.pc;
   return (
     <>
       <div>
@@ -36,9 +39,10 @@ export default function AddressStep({ acc, setAddrField, setAccField }) {
             <div className="acc-field">
               <label>Address line 1 *</label>
               <input
-                className="acc-input" value={addr.l1} onChange={(e) => setAddrField('l1', e.target.value)}
+                className={`acc-input${l1Missing ? ' input-error' : ''}`} value={addr.l1} onChange={(e) => setAddrField('l1', e.target.value)}
                 onBlur={(e) => setAddrField('l1', capitalizeFirst(e.target.value))}
               />
+              {l1Missing && <div className="acc-field-error">Enter address line 1.</div>}
             </div>
             <div className="acc-field">
               <label>Address line 2 <span style={{ color: 'rgba(0,0,0,.62)', fontWeight: 400 }}>(optional)</span></label>
@@ -58,9 +62,10 @@ export default function AddressStep({ acc, setAddrField, setAccField }) {
               <div className="acc-field" style={{ marginBottom: 0 }}>
                 <label>Town / city *</label>
                 <input
-                  className="acc-input" value={addr.town} onChange={(e) => setAddrField('town', e.target.value)}
+                  className={`acc-input${townMissing ? ' input-error' : ''}`} value={addr.town} onChange={(e) => setAddrField('town', e.target.value)}
                   onBlur={(e) => setAddrField('town', capitalizeFirst(e.target.value))}
                 />
+                {townMissing && <div className="acc-field-error">Enter your town / city.</div>}
               </div>
               <div className="acc-field" style={{ marginBottom: 0 }}>
                 <label>County</label>
@@ -71,11 +76,12 @@ export default function AddressStep({ acc, setAddrField, setAccField }) {
               </div>
             </div>
             <div className="acc-field" style={{ marginTop: 16, marginBottom: 0 }}>
-              <label>Postcode / postal code *</label>
+              <label>Postcode / postal code {isUK ? '*' : <span style={{ color: 'rgba(0,0,0,.62)', fontWeight: 400 }}>(optional)</span>}</label>
               <input
-                className="acc-input" style={isUK ? { textTransform: 'uppercase' } : undefined}
+                className={`acc-input${pcMissing ? ' input-error' : ''}`} style={isUK ? { textTransform: 'uppercase' } : undefined}
                 value={addr.pc} onChange={(e) => setAddrField('pc', e.target.value)}
               />
+              {pcMissing && <div className="acc-field-error">Enter your postcode.</div>}
             </div>
           </>
         )}

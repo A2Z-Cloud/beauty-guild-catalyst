@@ -54,6 +54,339 @@ const MEMBERSHIP_ADDONS = {
 	sticker: { name: 'Additional window sticker', priceGross: 4.00, priceNet: 3.33 },
 };
 
+// ---- Insurance pricing/underwriting (ported from public/membership-quote.js, which is
+// itself ported from src/insurance/pricing.js, rules.js) ----
+// Same reasoning as MEMBERSHIP_LEVELS above: the wizard only *shows* these figures, this
+// authoritative server-side copy is what's actually charged and recorded, so a tampered
+// client request can't buy cover it didn't qualify for or at a price it didn't earn.
+const INS_IPT_RATE = 0.12;
+const INS_TREATMENT_EXTENSIONS = [
+	{ id: 'advanced_electrolysis', name: 'Advanced Electrolysis', premium: 28 },
+	{ id: 'microneedling', name: 'Microneedling / Dermarolling', premium: 179.25 },
+	{ id: 'piercing', name: 'Nose / Cartilage Piercing', premium: 14.15 },
+	{ id: 'spmu', name: 'Microblading / SPMU / Micropigmentation', premium: 179.25 },
+	{ id: 'dermaplaning', name: 'Dermaplaning', premium: 179.25 },
+];
+const INS_NON_SALON_EQUIPMENT = [
+	{ value: 0, premium: 0 },
+	{ value: 5000, premium: 65 },
+	{ value: 10000, premium: 100 },
+	{ value: 15000, premium: 150 },
+	{ value: 20000, premium: 200 },
+];
+const INS_NON_SALON_EQUIPMENT_NON_STANDARD = [
+	{ value: 0, premium: 0 },
+	{ value: 5000, premium: 97.5 },
+	{ value: 10000, premium: 150 },
+	{ value: 15000, premium: 225 },
+	{ value: 20000, premium: 300 },
+];
+const INS_NON_SALON_EL = [
+	{ value: 1, premium: 75 },
+	{ value: 3, premium: 120 },
+	{ value: 5, premium: 150 },
+];
+const INS_DECLARATION_EXPECTED = ['no', 'no', 'no', 'no', 'no', 'yes', 'yes'];
+// Cover row `code` (from calculateInsuranceQuote below) -> Insurance_Extension.Cover_Type,
+// an exact-match CRM picklist (confirmed live: -None-, MedMal, Named Person, Treatment,
+// Teaching, Equipment, Employers Liability, Contents, Money, Buildings, Business
+// Interruption, Property Away, Ad Hoc Adjustment).
+const INS_COVER_TYPE_BY_CODE = {
+	MEDMAL: 'MedMal',
+	NAMED_EMPLOYEES: 'Named Person',
+	NAMED_SUBCONTRACTORS: 'Named Person',
+	TEACHING: 'Teaching',
+	TEACHING_PLUS: 'Teaching',
+	BUSINESS_EQUIPMENT: 'Equipment',
+	EMPLOYERS_LIABILITY: 'Employers Liability',
+	CONTENTS: 'Contents',
+	MONEY: 'Money',
+	BUILDINGS: 'Buildings',
+	BUSINESS_INTERRUPTION: 'Business Interruption',
+	PROPERTY_AWAY: 'Property Away',
+};
+
+function insPositive(value) { return Math.max(0, Number(value || 0)); }
+
+function insSalonMedMal(turnover) {
+	const amount = Number(turnover || 0);
+	if (amount <= 100000) return 75;
+	if (amount <= 175000) return 100;
+	if (amount <= 250000) return 150;
+	return null;
+}
+
+function insTerritoryFromCountry(country) {
+	const normalized = String(country || '').trim().toLowerCase();
+	if (!normalized || normalized === 'united kingdom' || normalized === 'uk' || normalized === 'great britain') return 'uk';
+	if (normalized.includes('channel island') || normalized === 'jersey' || normalized === 'guernsey') return 'ci';
+	if (normalized === 'isle of man') return 'iom';
+	return 'other';
+}
+
+// `ins` is the subset of the quote state prefixed `ins*` sent from the wizard (see
+// /payments/membership-checkout below for the exact field list expected).
+function calculateInsuranceQuote(ins) {
+	const rows = [];
+	const add = (code, label, premium) => {
+		const amount = Number(premium || 0);
+		if (amount > 0) rows.push({ code, label, premium: amount });
+	};
+	if (ins.insRoute === 'salon') add('MEDMAL', 'Medical Malpractice', insSalonMedMal(ins.insTurnover) || 0);
+	else add('MEDMAL', 'Medical Malpractice', 32.5);
+
+	const namedPeople = ins.insNamedPeopleCover ? (ins.insNamedPeople || []) : [];
+	namedPeople.forEach((person) => {
+		if (person.type === 'employee') add('NAMED_EMPLOYEES', `Named employee cover (${(person.firstName || '').trim()} ${(person.lastName || '').trim()})`.trim(), 32.5);
+		else if (person.type === 'subcontractor') add('NAMED_SUBCONTRACTORS', `Named subcontractor cover (${(person.firstName || '').trim()} ${(person.lastName || '').trim()})`.trim(), 15);
+	});
+
+	(ins.insTreatmentExtensions || []).forEach((id) => {
+		const extension = INS_TREATMENT_EXTENSIONS.find((item) => item.id === id);
+		if (extension) add(`TREATMENT_${id.toUpperCase()}`, extension.name, extension.premium);
+	});
+	if (ins.insTeachingCover === 'standard') add('TEACHING', 'Teaching + Student Cover', 75);
+	if (ins.insTeachingCover === 'additional') add('TEACHING_PLUS', 'Teaching + Student Cover + Additional Treatments', 150);
+
+	if (ins.insRoute === 'non_salon') {
+		const nonStandard = ins.insStandardConstruction === 'no';
+		const table = nonStandard ? INS_NON_SALON_EQUIPMENT_NON_STANDARD : INS_NON_SALON_EQUIPMENT;
+		const equipment = table.find((item) => item.value === Number(ins.insEquipmentTier));
+		if (equipment) add('BUSINESS_EQUIPMENT', `Business Equipment${nonStandard ? ' (non-standard construction)' : ''}`, equipment.premium);
+		if (ins.insNonSalonEL) {
+			const el = INS_NON_SALON_EL.find((item) => item.value === Number(ins.insNonSalonELTier));
+			if (el) add('EMPLOYERS_LIABILITY', "Employers' Liability", el.premium);
+		}
+	} else {
+		if (ins.insSalonEL) add('EMPLOYERS_LIABILITY', "Employers' Liability", Math.max(insPositive(ins.insWageRoll) * 0.002, 75));
+		if (ins.insContents) {
+			const contentsPremium = Math.max(
+				insPositive(ins.insComputers) * 0.008 +
+				insPositive(ins.insEquipment) * 0.02 +
+				insPositive(ins.insStock) * 0.008 +
+				insPositive(ins.insGeneralContents) * 0.005 +
+				insPositive(ins.insTenantImprovements) * 0.0015 +
+				insPositive(ins.insRentPayable) * 0.0015,
+				50
+			);
+			add('CONTENTS', 'Contents', contentsPremium);
+		}
+		if (ins.insMoneyCover) add('MONEY', 'Money', 20);
+		if (ins.insBuildingsCover) {
+			const buildingsPremium = Math.max(
+				insPositive(ins.insBuildingsSI) * 0.0015 +
+				insPositive(ins.insFixturesSI) * 0.0015 +
+				insPositive(ins.insRentReceivableSI) * 0.0015,
+				75
+			);
+			add('BUILDINGS', 'Buildings', buildingsPremium);
+		}
+		if (ins.insBiCover) {
+			const biPremium = Math.max(
+				insPositive(ins.insBiIncome) * 0.0008 +
+				insPositive(ins.insBiDebts) * 0.0006,
+				50
+			);
+			add('BUSINESS_INTERRUPTION', 'Business Interruption', biPremium);
+		}
+		if (ins.insPropertyAwayCover) add('PROPERTY_AWAY', 'Property Away', Math.max(insPositive(ins.insPropertyAwaySI) * 0.025, 50));
+	}
+	const net = rows.reduce((sum, row) => sum + row.premium, 0);
+	const ipt = net * INS_IPT_RATE;
+	return { rows, net, ipt, total: net + ipt };
+}
+
+function evaluateInsuranceRules(ins, detailsCountry) {
+	const results = [];
+	const push = (status, code, customerMessage) => results.push({ status, code, customerMessage });
+	const territory = insTerritoryFromCountry(detailsCountry);
+	if (territory === 'other') push('STOP', 'UNSUPPORTED_TERRITORY', 'We cannot complete an online quotation for this territory.');
+	if ((ins.insNamedPeopleCover ? (ins.insNamedPeople || []) : []).length > 4) push('REFER', 'NAMED_PEOPLE_LIMIT', 'The Insurance team needs to review the number of people working in your business.');
+	if (ins.insRoute === 'salon') {
+		if (insPositive(ins.insTurnover) > 250000) push('STOP', 'SALON_TURNOVER_LIMIT', 'Your annual turnover is above the current online quotation limit.');
+		if (insPositive(ins.insWageRoll) > 125000) push('STOP', 'WAGE_ROLL_LIMIT', 'Your annual wage roll is above the current online quotation limit.');
+		if (insPositive(ins.insSalonCount) > 1) push('REFER', 'MULTIPLE_SALONS', 'More than one salon needs to be reviewed by the Insurance team.');
+		if (ins.insContents) {
+			const totalContents = ['insComputers', 'insEquipment', 'insStock', 'insGeneralContents', 'insTenantImprovements', 'insRentPayable'].reduce((sum, key) => sum + insPositive(ins[key]), 0);
+			if (totalContents > 250000) push('STOP', 'CONTENTS_LIMIT', 'Your Contents sum insured is above £250,000.');
+			if (ins.insSoleOccupation === 'no') push('REFER', 'SOLE_OCCUPATION', 'The Insurance team needs to review sole occupation of your premises.');
+			if (ins.insStandardConstruction === 'no' && ins.insNonStandardOver15 === 'yes') push('REFER', 'NON_STANDARD_CONSTRUCTION_CONTENTS', 'The construction of the premises needs to be reviewed by the Insurance team.');
+		}
+		if (ins.insBuildingsCover && ins.insBuildingsSubsidenceDeclaration === 'no') push('STOP', 'BUILDINGS_SUBSIDENCE', 'We cannot continue this quotation online based on the subsidence declaration for your buildings cover.');
+		if (ins.insBuildingsCover) {
+			const buildingsTotal = insPositive(ins.insBuildingsSI) + insPositive(ins.insFixturesSI) + insPositive(ins.insRentReceivableSI);
+			if (buildingsTotal > 500000) push('STOP', 'BUILDINGS_LIMIT', 'Your Buildings sum insured is above £500,000.');
+		}
+		if (ins.insBiCover) {
+			const biTotal = insPositive(ins.insBiIncome) + insPositive(ins.insBiDebts);
+			if (biTotal > 300000) push('STOP', 'BI_LIMIT', 'Your Business Interruption sum insured is above £300,000.');
+		}
+		if (ins.insPropertyAwayCover && insPositive(ins.insPropertyAwaySI) > 25000) push('STOP', 'PROPERTY_AWAY_LIMIT', 'Your Property Away sum insured is above £25,000.');
+		if (ins.insFloodHistory === 'yes' && ins.insBasement === 'yes') push('REFER', 'FLOOD_BASEMENT', 'The Insurance team needs to review the flood history for this premises.');
+		if (ins.insSubsidenceHistory === 'yes') push('REFER', 'SUBSIDENCE_HISTORY', 'The Insurance team needs to review the subsidence history for this premises.');
+	} else if (Number(ins.insEquipmentTier) > 0) {
+		if (ins.insStandardConstruction === 'no' && ins.insNonStandardOver15 === 'yes') push('REFER', 'NON_STANDARD_CONSTRUCTION', 'The construction of the premises needs to be reviewed by the Insurance team.');
+		if (ins.insMultipleAddresses === 'yes') push('REFER', 'MULTIPLE_ADDRESSES', 'Cover across multiple addresses needs to be reviewed by the Insurance team.');
+	}
+	if ((ins.insTreatmentExtensions || []).length) {
+		if (ins.insQualifiedForTreatments === 'no') push('STOP', 'TREATMENT_QUALIFICATION', 'The required treatment qualifications must be confirmed before continuing.');
+		if (ins.insPatchTesting === 'no') push('STOP', 'PATCH_TESTING', 'The required patch testing declaration must be confirmed before continuing.');
+	}
+	if (ins.insInformationAccurate === 'no') push('STOP', 'INFORMATION_ACCURACY', 'The information provided must be confirmed as complete and accurate before continuing.');
+	if (ins.insEthicsAccepted === 'no') push('STOP', 'CODE_OF_ETHICS', 'The Beauty Guild Code of Ethics must be accepted before continuing.');
+	if (ins.insDemandsNeedsAccepted === 'no') push('STOP', 'DEMANDS_AND_NEEDS', 'The demands and needs confirmation must be accepted before continuing.');
+	if (ins.insNonAdvisedAccepted === 'no') push('STOP', 'NON_ADVISED_SALE', 'The non-advised sale confirmation must be accepted before continuing.');
+	(ins.insDeclarations || []).forEach((answer, index) => {
+		if (answer && answer !== INS_DECLARATION_EXPECTED[index]) push('REFER', `DECLARATION_${index + 1}`, 'One or more declaration answers need to be reviewed by the Insurance team.');
+	});
+	const stop = results.filter((r) => r.status === 'STOP');
+	const refer = results.filter((r) => r.status === 'REFER');
+	return { results, stop, refer, overall: stop.length ? 'STOP' : refer.length ? 'REFER' : 'PASS' };
+}
+
+function insurancePropertyRequired(ins) {
+	return ins.insRoute === 'salon' && (ins.insContents || ins.insMoneyCover || ins.insBuildingsCover || ins.insBiCover || ins.insPropertyAwayCover);
+}
+
+// "yes"/"no" (wizard convention) -> "Yes"/"No" (CRM picklist convention, confirmed live).
+function insYesNo(value) { return value === 'yes' ? 'Yes' : value === 'no' ? 'No' : undefined; }
+
+const INS_BUSINESS_DESCRIPTION_BY_FLAG = {
+	insWorkingFromHome: 'I work from home',
+	insMobile: 'I work on a mobile basis',
+	insRentedRoom: 'I solely occupy a treatment room within a salon, Fitness/leisure or other commercial establishment',
+	insSubcontractor: 'I am a self-employed subcontractor within a multi-therapist salon',
+	insSalon: 'I own/operate a salon in a commercial/retail premises',
+};
+
+// Creates the Insurance_Policy, Insured_Premises, Insured_People and Insurance_Extension CRM
+// records for a quote that's about to be paid for, and returns their new ids. Each step is
+// sequential (not Promise.all) because later records need the ids created earlier (extensions
+// link back to the policy, and to whichever person/premises they belong to).
+async function createInsuranceRecords(headers, { contactId, membershipDealId, ins, detailsCountry, quote, entryRoute, termsAccepted }) {
+	const businessDescription = Object.entries(INS_BUSINESS_DESCRIPTION_BY_FLAG)
+		.filter(([flag]) => ins[flag])
+		.map(([, label]) => label);
+
+	const policyRecord = {
+		Contact: contactId || undefined,
+		Membership: membershipDealId || undefined,
+		Policy_Type: ins.insRoute === 'salon' ? 'Salon' : 'Non Salon',
+		Business_Description: businessDescription.length ? businessDescription : undefined,
+		Annual_Turnover: ins.insRoute === 'salon' ? insPositive(ins.insTurnover) : undefined,
+		Application_Status: 'Ready for Payment',
+		Application_Source: 'Website',
+		Entry_Route: entryRoute || 'Existing Member',
+	};
+	const policyId = await crmCreate(headers, 'Insurance_Policy', policyRecord);
+
+	let premisesId = null;
+	if (insurancePropertyRequired(ins)) {
+		const premises = ins.insPremisesAddress || {};
+		premisesId = await crmCreate(headers, 'Insured_Premises', {
+			Policy: policyId,
+			Name: premises.l1 || premises.postcode || `Premises - ${policyId}`,
+			Address_Line_1: premises.l1 || undefined,
+			Address_Line_2: premises.l2 || undefined,
+			Town: premises.town || undefined,
+			County: premises.county || undefined,
+			Postcode: premises.postcode || undefined,
+			Country: premises.country || undefined,
+			Standard_Construction: insYesNo(ins.insStandardConstruction),
+			More_Than_15_Percent_Nonstandard: insYesNo(ins.insNonStandardOver15),
+			Sole_Occupation_Confirmed: insYesNo(ins.insSoleOccupation),
+			Not_Unoccupied_Over_30_Days: insYesNo(ins.insUnoccupiedDeclaration),
+			Flat_Roof_Present: insYesNo(ins.insFlatRoof),
+			Previous_Flooding: insYesNo(ins.insFloodHistory),
+			Previous_Subsidence: insYesNo(ins.insSubsidenceHistory),
+			Basement_or_Semi_Basement: insYesNo(ins.insBasement),
+			Buildings_Subsidence_Declaration: insYesNo(ins.insBuildingsSubsidenceDeclaration),
+		});
+	}
+
+	const namedPeople = ins.insNamedPeopleCover ? (ins.insNamedPeople || []) : [];
+	const personIdByNameKey = {};
+	for (const person of namedPeople) {
+		const fullName = `${(person.firstName || '').trim()} ${(person.lastName || '').trim()}`.trim();
+		const personId = await crmCreate(headers, 'Insured_People', {
+			Policy: policyId,
+			Name: fullName || 'Unnamed',
+			First_Name: (person.firstName || '').trim() || undefined,
+			Last_Name: (person.lastName || '').trim() || undefined,
+			Person_Type: person.type === 'subcontractor' ? 'Subcontractors' : 'Employees',
+			Status: 'Draft',
+		});
+		personIdByNameKey[`${person.type}:${person.firstName}:${person.lastName}`] = personId;
+	}
+
+	const insuredPeopleIds = Object.values(personIdByNameKey);
+	const extensionIds = [];
+	for (const row of quote.rows) {
+		const coverType = INS_COVER_TYPE_BY_CODE[row.code] || (row.code.startsWith('TREATMENT_') ? 'Treatment' : 'Ad Hoc Adjustment');
+		const extensionRecord = {
+			Policy: policyId,
+			Cover_Type: coverType,
+			Cover_Code: row.code,
+			Premium_Net: row.premium,
+			IPT_Rate: INS_IPT_RATE,
+			IPT_Amount: Math.round(row.premium * INS_IPT_RATE * 100) / 100,
+			Gross_Amount: Math.round(row.premium * (1 + INS_IPT_RATE) * 100) / 100,
+			VAT_Rate: 0,
+			VAT_Amount: 0,
+			VAT_Classification: 'Exempt per source',
+			Status: 'Draft',
+		};
+		if (row.code === 'NAMED_EMPLOYEES' || row.code === 'NAMED_SUBCONTRACTORS') {
+			const type = row.code === 'NAMED_EMPLOYEES' ? 'employee' : 'subcontractor';
+			const match = namedPeople.find((p) => p.type === type && row.label.includes((p.firstName || '').trim()) && row.label.includes((p.lastName || '').trim()));
+			if (match) extensionRecord.Insured_Person = personIdByNameKey[`${match.type}:${match.firstName}:${match.lastName}`];
+		}
+		if (premisesId && ['CONTENTS', 'MONEY', 'BUILDINGS', 'BUSINESS_INTERRUPTION', 'PROPERTY_AWAY'].includes(row.code)) {
+			extensionRecord.Insured_Premises = premisesId;
+		}
+		extensionIds.push(await crmCreate(headers, 'Insurance_Extension', extensionRecord));
+	}
+
+	// The 7 underwriting declarations plus the 4 final confirmations, all answered "yes"/"no"
+	// in the wizard - the only outcome that ever reaches this point is a clean PASS (checked
+	// by the caller before any of this runs), so Referral_Required is always false here; a
+	// REFER-worthy answer would have already stopped checkout rather than being recorded as paid.
+	const decl = ins.insDeclarations || [];
+	const declarationsRecord = {
+		Insurance_Policy: policyId,
+		Name: `Declarations - ${policyId}`,
+		Previous_Claims_or_Losses: insYesNo(decl[0]),
+		Bankrupt_or_Insolvent: insYesNo(decl[1]),
+		Known_Claim_Circumstances: insYesNo(decl[2]),
+		Criminal_Convictions: insYesNo(decl[3]),
+		Insurance_Declined: insYesNo(decl[4]),
+		Over_18_and_UK_Domiciled: insYesNo(decl[5]),
+		Supported_Territories_Only: insYesNo(decl[6]),
+		Qualifications_Held: insYesNo(ins.insQualifiedForTreatments),
+		Patch_Testing_Agreed: insYesNo(ins.insPatchTesting),
+		Previous_Flooding: insYesNo(ins.insFloodHistory),
+		Basement: insYesNo(ins.insBasement),
+		Previous_Subsidence: insYesNo(ins.insSubsidenceHistory),
+		Sole_Occupation: insYesNo(ins.insSoleOccupation),
+		Not_Unoccupied_Over_30_Days: insYesNo(ins.insUnoccupiedDeclaration),
+		Standard_Construction: insYesNo(ins.insStandardConstruction),
+		Over_15_Non_Standard: insYesNo(ins.insNonStandardOver15),
+		Flat_Roof: insYesNo(ins.insFlatRoof),
+		Buildings_Subsidence_Decl: insYesNo(ins.insBuildingsSubsidenceDeclaration),
+		Information_Accurate: ins.insInformationAccurate === 'yes',
+		Code_of_Ethics_Agreed: ins.insEthicsAccepted === 'yes',
+		Demands_and_Needs_Correct: ins.insDemandsNeedsAccepted === 'yes',
+		Non_Advised_Sale_Understood: ins.insNonAdvisedAccepted === 'yes',
+		Terms_and_Privacy_Accepted: termsAccepted === true,
+		Referral_Required: false,
+		Cover_Summary: quote.rows.map((row) => row.label).join(', '),
+	};
+	if (contactId) declarationsRecord.Contact = contactId;
+	const declarationsId = await crmCreate(headers, 'Declarations', declarationsRecord);
+
+	return { policyId, premisesId, insuredPeopleIds, extensionIds, declarationsId };
+}
+
 // Before a school name is ever typed, a draft needs *some* value for the (mandatory) CRM
 // Account_Name / Training_Centres.Name fields - "Draft application - <contactId>" - written
 // in /accreditations/draft below. That's purely an internal placeholder and must never be
@@ -200,7 +533,6 @@ app.get('/courses', async (req, res) => {
 
 const DEAL_MEMBERSHIP_FIELDS = [
 	'Stage', 'Membership_Type', 'Membership_Branch', 'Membership_Subscription_Type', 'Expiry_Date',
-	'Start_Date', 'Contact_Name', 'Member_Profile',
 ];
 
 // Matched by prefix, case-insensitively, not exact equality - real Deal records mix nicely-cased
@@ -258,12 +590,18 @@ function membershipBranchKey(rawBranch) {
 	const match = Object.entries(MEMBERSHIP_BRANCHES).find(([, name]) => normaliseForMatch(name) === normalised);
 	return match ? match[0] : null;
 }
+// Deliberately does not also require deal.Member_Profile.id here - CRM's /Deals/search
+// endpoint silently drops that lookup's value even when it's requested via `fields` and is
+// genuinely populated on the record (confirmed: a direct /Deals/{id} fetch of the same record
+// returns it fine). Gating "is this membership active" on a field the search API can't
+// reliably return would wrongly treat real, paid, active members as having no membership at
+// all - checked separately via a direct fetch where the real id is actually needed.
 function isCurrentMembership(deal, today) {
 	if (deal.Stage !== 'Active') return false;
 	if (!matchedMembershipTypePrefix(deal.Membership_Type)) return false;
 	if (deal.Start_Date && deal.Start_Date > today) return false;
 	if (deal.Expiry_Date && deal.Expiry_Date < today) return false;
-	return !!(deal.Member_Profile && deal.Member_Profile.id);
+	return true;
 }
 
 async function getMembershipDecision(headers, contactId, startDate, expiryDate) {
@@ -288,13 +626,29 @@ async function getMembershipDecision(headers, contactId, startDate, expiryDate) 
 	// Runs to the day before the anniversary of the start date (e.g. 1 Sept 26 - 31 Aug 27),
 	// not the exact same calendar date a year later - matters for insurance continuity.
 	const membershipExpiry = expiryDate || annualPeriodEnd(membershipStart);
+	// The search response above can't be trusted for Member_Profile (see isCurrentMembership) -
+	// fetch the one active deal directly by id, which does return it reliably, rather than
+	// read a value the search API silently dropped.
+	let activeDealMemberProfileId = null;
+	if (activeDeal) {
+		// No `fields` filter here deliberately - that's the exact combination (search's
+		// `fields` param, and a plain /Deals/{id} fetch with a `fields` param) not yet confirmed
+		// to return Member_Profile; a full, unfiltered /Deals/{id} fetch is the one pattern
+		// actually verified to return it.
+		const rawDealRes = await fetch(`${CRM_API_DOMAIN}/crm/v3/Deals/${activeDeal.id}`, { headers });
+		if (rawDealRes.ok && rawDealRes.status !== 204) {
+			const rawDealBody = await rawDealRes.json();
+			const rawDeal = rawDealBody.data && rawDealBody.data[0];
+			activeDealMemberProfileId = (rawDeal && rawDeal.Member_Profile && rawDeal.Member_Profile.id) || null;
+		}
+	}
 	return activeDeal ? {
 		membershipRequired: false,
 		membershipStatus: 'active',
 		membershipType: membershipTypeLabel(activeDeal.Membership_Type),
 		membershipStart: activeDeal.Start_Date || null,
 		membershipExpiry: activeDeal.Expiry_Date || null,
-		membershipId: activeDeal.Member_Profile && activeDeal.Member_Profile.id || null,
+		membershipId: activeDealMemberProfileId,
 		dealId: activeDeal.id,
 		// For pre-filling a renewal quote - the raw ids the checkout endpoint and the quote
 		// wizard itself use, not the display label above.
@@ -450,6 +804,9 @@ app.get('/memberships/:dealId/extensions', async (req, res) => {
 				// token into Membership_Branch instead of the actual branch, and that must never
 				// be shown to the member as if it were their selection.
 				branch: branchKey ? MEMBERSHIP_BRANCHES[branchKey] : null,
+				// The internal id (beauty/holistic/nails/hair), not just the display name - so a
+				// renewal/upgrade can pre-select the same secondary branch checkboxes it reads back.
+				branchId: branchKey || null,
 				quantity: e.Quantity ?? null,
 				basePrice: e.Base_Price ?? null,
 				finalPrice: e.Final_Price ?? null,
@@ -2147,10 +2504,27 @@ app.post('/payments/membership-checkout', async (req, res) => {
 		contactId, email, name, quoteReference, entryPoint,
 		membershipLevel, primaryBranch, secondaryBranches, addons,
 		insuranceRequested, subscriptionType, membershipStart, membershipExpiry,
-		previousMembershipId,
+		previousMembershipId, changeType, insurance, detailsCountry, termsAccepted,
 	} = req.body || {};
 	if (!email || !membershipLevel || !primaryBranch || !subscriptionType) {
 		return res.status(400).json({ error: 'email, membershipLevel, primaryBranch and subscriptionType are required' });
+	}
+	// Insurance rides along in the same checkout, but is still gated exactly like the wizard
+	// itself gates "Pay now" client-side - re-checked here too, since nothing from the client
+	// is trusted for whether a quote is actually payable online, any more than its amounts are.
+	let insuranceQuote = null;
+	if (insuranceRequested) {
+		if (!insurance || typeof insurance !== 'object') {
+			return res.status(400).json({ error: 'insurance details are required when insuranceRequested is true' });
+		}
+		const insRules = evaluateInsuranceRules(insurance, detailsCountry);
+		if (insRules.overall !== 'PASS') {
+			return res.status(422).json({ error: 'This insurance quote needs review by the Insurance team and cannot be paid for online yet.', details: insRules.results });
+		}
+		insuranceQuote = calculateInsuranceQuote(insurance);
+		if (!insuranceQuote.rows.length) {
+			return res.status(400).json({ error: 'Insurance was requested but no cover was actually selected.' });
+		}
 	}
 	const level = MEMBERSHIP_LEVELS[membershipLevel];
 	if (!level) return res.status(400).json({ error: `Unknown membershipLevel: ${membershipLevel}` });
@@ -2183,6 +2557,7 @@ app.post('/payments/membership-checkout', async (req, res) => {
 		// and a genuinely new member.
 		let membershipProfileId = null;
 		let existingMembership = null;
+		let existingDealId = null;
 		if (contactId) {
 			const decision = await getMembershipDecision(headers, contactId);
 			membershipProfileId = decision.membershipId || null;
@@ -2191,6 +2566,27 @@ app.post('/payments/membership-checkout', async (req, res) => {
 				start_date: decision.membershipStart,
 				expiry_date: decision.membershipExpiry,
 				deal_id: decision.dealId,
+			});
+			// Only set when they already have a current, active Deal (not when one's merely
+			// pending creation by this same checkout) - that pending case is the one the webhook
+			// itself has to link back via insurance_policy_id, as described below.
+			if (!decision.membershipRequired) existingDealId = decision.dealId || null;
+		}
+
+		// Insurance CRM records are created now, before payment, not by a post-payment webhook
+		// like the membership Deal is - unlike the Deal (which doesn't exist to link to until
+		// the webhook creates it), there's nothing later in this flow that would otherwise ever
+		// write these down, and the Stripe metadata below needs their real ids. The new
+		// membership Deal, once the webhook creates it, is expected to link back here itself
+		// using insurance_policy_id from this same metadata - mirroring how it already links a
+		// renewal back to previous_membership_id.
+		let insuranceRecordIds = null;
+		if (insuranceRequested) {
+			insuranceRecordIds = await createInsuranceRecords(headers, {
+				contactId, membershipDealId: existingDealId,
+				ins: insurance, detailsCountry, quote: insuranceQuote,
+				entryRoute: contactId ? 'Existing Member' : 'Public Prospect',
+				termsAccepted,
 			});
 		}
 
@@ -2259,8 +2655,17 @@ app.post('/payments/membership-checkout', async (req, res) => {
 			addonAmountsNet[id] = amountNet;
 			lineItems.push({ price_data: { currency: 'gbp', product_data: { name: addon.name }, unit_amount: Math.round(addon.priceGross * 100) }, quantity });
 		});
-		const totalGross = membershipUnitGross + joiningFeeGross + branchAddonGross + extrasGross;
-		const totalNet = membershipUnitNet + joiningFeeNet + branchAddonNet + extrasNet;
+		// Insurance is a one-off cost either way (it's not part of the recurring subscription
+		// price above), so each cover row - and the IPT on top, named separately rather than
+		// folded in, same as the quote page itself shows it - becomes its own one-time line item.
+		if (insuranceQuote) {
+			insuranceQuote.rows.forEach((row) => {
+				lineItems.push({ price_data: { currency: 'gbp', product_data: { name: `Insurance - ${row.label}` }, unit_amount: Math.round(row.premium * 100) }, quantity: 1 });
+			});
+			lineItems.push({ price_data: { currency: 'gbp', product_data: { name: `Insurance Premium Tax (${(INS_IPT_RATE * 100).toFixed(0)}%)` }, unit_amount: Math.round(insuranceQuote.ipt * 100) }, quantity: 1 });
+		}
+		const totalGross = membershipUnitGross + joiningFeeGross + branchAddonGross + extrasGross + (insuranceQuote ? insuranceQuote.total : 0);
+		const totalNet = membershipUnitNet + joiningFeeNet + branchAddonNet + extrasNet + (insuranceQuote ? insuranceQuote.total : 0);
 
 		const params = new URLSearchParams();
 		params.set('mode', 'subscription');
@@ -2289,17 +2694,19 @@ app.post('/payments/membership-checkout', async (req, res) => {
 			params.set(`line_items[${i}][quantity]`, String(item.quantity));
 		});
 		const metadata = {
-			type: 'membership',
+			type: insuranceRequested ? 'membership_insurance' : 'membership',
 			quote_reference: quoteReference || '',
 			entry_point: entryPoint || 'member',
 			contact_id: contactId || '',
 			membership_profile_id: membershipProfileId || '',
 			existing_membership: existingMembership || '',
-			// The Deal id of the membership being renewed, if this checkout came from the portal's
-			// "Renew now" flow - for the Creator webhook to link the new Deal back via
-			// Previous Membership per the solution design's renewal section, and to leave the old
-			// Deal untouched as history rather than closing it out itself.
+			// The Deal id of the membership being renewed or upgraded, if this checkout came from
+			// one of the portal's "Renew now"/"Upgrade" flows - for the Creator webhook to link the
+			// new Deal back via Previous Membership, and to leave the old Deal untouched as history
+			// rather than closing it out itself. change_type distinguishes the two (both waive the
+			// joining fee and both set previous_membership_id) from an ordinary new purchase.
 			previous_membership_id: previousMembershipId || '',
+			change_type: changeType || (previousMembershipId ? 'renewal' : 'new'),
 			email, name: name || '',
 			membership_level: membershipLevel,
 			primary_branch: primaryBranch,
@@ -2323,7 +2730,19 @@ app.post('/payments/membership-checkout', async (req, res) => {
 			badge_amount_net: (addonAmountsNet.badge || 0).toFixed(2),
 			sticker_amount: (addonAmounts.sticker || 0).toFixed(2),
 			sticker_amount_net: (addonAmountsNet.sticker || 0).toFixed(2),
-			insurance_amount: insuranceRequested ? 'quoted_separately' : 'not_requested',
+			insurance_amount: insuranceQuote ? insuranceQuote.total.toFixed(2) : 'not_requested',
+			insurance_net_amount: insuranceQuote ? insuranceQuote.net.toFixed(2) : '',
+			insurance_ipt_amount: insuranceQuote ? insuranceQuote.ipt.toFixed(2) : '',
+			insurance_route: insurance ? insurance.insRoute || '' : '',
+			// The new membership Deal (created post-payment by the existing Creator webhook, not
+			// by this endpoint) is expected to read insurance_policy_id back off this same Stripe
+			// session and set its own Insurance_Policy.Membership lookup - this policy was created
+			// too early in the flow to link to a Deal id that doesn't exist yet.
+			insurance_policy_id: insuranceRecordIds ? insuranceRecordIds.policyId || '' : '',
+			insured_premises_id: insuranceRecordIds ? insuranceRecordIds.premisesId || '' : '',
+			insured_people_ids: insuranceRecordIds ? insuranceRecordIds.insuredPeopleIds.join(',') : '',
+			insurance_extension_ids: insuranceRecordIds ? insuranceRecordIds.extensionIds.join(',') : '',
+			insurance_declarations_id: insuranceRecordIds ? insuranceRecordIds.declarationsId || '' : '',
 			total_amount: totalGross.toFixed(2),
 			total_amount_net: totalNet.toFixed(2),
 			currency: 'GBP',

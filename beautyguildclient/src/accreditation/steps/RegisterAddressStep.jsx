@@ -4,9 +4,12 @@ import LoqateAddressLookup from '../components/LoqateAddressLookup';
 
 // Matches the real Register flow's two-part Home Address screen: a postcode lookup first,
 // then an editable confirm screen.
-export default function RegisterAddressStep({ acc, setAddrField, setAccField, onManualEntry }) {
+export default function RegisterAddressStep({ acc, setAddrField, setAccField, onManualEntry, showErrors }) {
   const addr = acc.addr;
   const isUK = addr.country === 'United Kingdom';
+  const l1Missing = showErrors && !addr.l1;
+  const townMissing = showErrors && !addr.town;
+  const pcMissing = showErrors && isUK && !addr.pc;
 
   if (!acc.addrLooked) {
     return (
@@ -56,7 +59,7 @@ export default function RegisterAddressStep({ acc, setAddrField, setAccField, on
         <div className="acc-field">
           <label>Address *</label>
           <input
-            className="acc-input" value={addr.l1} onChange={(e) => setAddrField('l1', e.target.value)}
+            className={`acc-input${l1Missing ? ' input-error' : ''}`} value={addr.l1} onChange={(e) => setAddrField('l1', e.target.value)}
             onBlur={(e) => setAddrField('l1', capitalizeFirst(e.target.value))} style={{ marginBottom: 9 }}
           />
           <input
@@ -67,13 +70,15 @@ export default function RegisterAddressStep({ acc, setAddrField, setAccField, on
             className="acc-input" value={addr.l3} onChange={(e) => setAddrField('l3', e.target.value)}
             onBlur={(e) => setAddrField('l3', capitalizeFirst(e.target.value))}
           />
+          {l1Missing && <div className="acc-field-error">Enter your address.</div>}
         </div>
         <div className="acc-field">
           <label>Town *</label>
           <input
-            className="acc-input" value={addr.town} onChange={(e) => setAddrField('town', e.target.value)}
+            className={`acc-input${townMissing ? ' input-error' : ''}`} value={addr.town} onChange={(e) => setAddrField('town', e.target.value)}
             onBlur={(e) => setAddrField('town', capitalizeFirst(e.target.value))}
           />
+          {townMissing && <div className="acc-field-error">Enter your town / city.</div>}
         </div>
         <div className="acc-field">
           <label>County</label>
@@ -83,8 +88,9 @@ export default function RegisterAddressStep({ acc, setAddrField, setAccField, on
           />
         </div>
         <div className="acc-field">
-          <label>Postcode *</label>
-          <input className="acc-input" style={{ textTransform: 'uppercase' }} value={addr.pc} onChange={(e) => setAddrField('pc', e.target.value)} />
+          <label>Postcode {isUK ? '*' : <span style={{ color: 'rgba(0,0,0,.62)', fontWeight: 400 }}>(optional)</span>}</label>
+          <input className={`acc-input${pcMissing ? ' input-error' : ''}`} style={isUK ? { textTransform: 'uppercase' } : undefined} value={addr.pc} onChange={(e) => setAddrField('pc', e.target.value)} />
+          {pcMissing && <div className="acc-field-error">Enter your postcode.</div>}
         </div>
         <div className="acc-field" style={{ marginBottom: 0 }}>
           <label>Country</label>

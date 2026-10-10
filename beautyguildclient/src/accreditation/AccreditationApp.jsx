@@ -223,7 +223,6 @@ function PortalDashboard({ contact, membership, accreditationsLoaded, drafts, pe
       <div className="acc-body portal-dashboard" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%' }}>
         <div className="portal-hero">
           <div><div className="portal-eyebrow">BEAUTY GUILD MEMBER PORTAL</div><h1>Your portal at a glance</h1><p>Manage your membership, courses, accreditation and insurance services in one place.</p></div>
-          <button type="button" className="acc-btn-primary" onClick={onAccreditation}>Open accreditation →</button>
         </div>
         <div className="portal-card-grid">
           <button type="button" className="portal-card" onClick={() => onNavigate('Membership')}><span className="portal-card-icon"><PersonIcon /></span><span className="portal-card-kicker">MEMBERSHIP</span><strong>{membership?.membershipStatus === 'active' ? `${membership.membershipType || 'Guild'} Membership` : 'Guild Membership'}</strong><span>{membership?.membershipStatus === 'active' ? `Valid until ${formatUkDate(membership.membershipExpiry) || 'recorded date'}` : 'View your membership status and details.'}</span><span className="portal-card-arrow">→</span></button>
@@ -335,7 +334,7 @@ function MembershipHistorySection({ contactId, onSelectMembership }) {
   );
 }
 
-function MembershipPage({ membership, membershipError, onRetry, onAccreditation, contactId, onSelectMembership }) {
+function MembershipPage({ membership, membershipError, onRetry, onAccreditation, contactId, contact, onSelectMembership }) {
   // Bumped on every refresh so MembershipHistorySection (which fetches its own history on
   // mount) remounts and refetches too - onRetry alone only re-checks the current membership
   // decision, not the full history table below it.
@@ -385,6 +384,19 @@ function MembershipPage({ membership, membershipError, onRetry, onAccreditation,
         data-membership-level-id={membership.membershipLevelId || ''}
         data-membership-branch-id={membership.primaryBranchId || ''}
         data-membership-subscription-type={membership.subscriptionType || ''}
+        data-membership-insurance-requested={membership.insuranceRequested ? 'true' : 'false'}
+        data-contact-first-name={contact?.firstName || ''}
+        data-contact-last-name={contact?.lastName || ''}
+        data-contact-email={contact?.email || ''}
+        data-contact-phone={contact?.phone || ''}
+        data-contact-mobile={contact?.mobile || ''}
+        data-contact-address-line1={contact?.addressLine1 || ''}
+        data-contact-address-line2={contact?.addressLine2 || ''}
+        data-contact-postcode={contact?.postcode || ''}
+        data-contact-town={contact?.town || ''}
+        data-contact-county={contact?.county || ''}
+        data-contact-country={contact?.country || ''}
+        data-contact-interests={JSON.stringify(contact?.interests || [])}
       >
         <div style={!active ? { gridColumn: '1 / -1' } : undefined}>
           <span className={`acc-status-badge${active ? '' : ' warning'}`}>{active ? 'Current' : 'No current membership'}</span>
@@ -411,6 +423,12 @@ function MembershipPage({ membership, membershipError, onRetry, onAccreditation,
 export default function AccreditationApp() {
   const [screen, setScreen] = useState('entry'); // 'entry' | 'wizard' | 'done' | 'manage'
   const [stepIndex, setStepIndex] = useState(0);
+  // Set when Continue is clicked while the step is still invalid, so the step component can
+  // highlight exactly which required fields are missing - a disabled button alone doesn't
+  // tell the applicant what to fix. Cleared whenever the step changes, so an already-answered
+  // step a user returns to later doesn't show stale error highlighting.
+  const [attemptedNext, setAttemptedNext] = useState(false);
+  useEffect(() => { setAttemptedNext(false); }, [stepIndex]);
   const [skippedAccount, setSkippedAccount] = useState(false);
   const [acc, setAcc] = useState(initialAccState);
   const [modal, setModal] = useState(null);
@@ -468,6 +486,7 @@ export default function AccreditationApp() {
   // journey is Email/Password -> Your Details+Interests -> Home Address -> Create Account,
   // not steps inside the Accreditation wizard itself.
   const [registerStage, setRegisterStage] = useState('account');
+  useEffect(() => { setAttemptedNext(false); }, [registerStage]);
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [submittingAccred, setSubmittingAccred] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -1277,7 +1296,7 @@ export default function AccreditationApp() {
         onNavigate={setScreen}
       />
     );
-    if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} contactId={loggedInContact?.id} onSelectMembership={selectMembership} />;
+    if (isLoggedIn && screen === 'Membership') return <MembershipPage membership={membershipDecision} membershipError={membershipError} onRetry={retryMembershipCheck} onAccreditation={goEntry} contactId={loggedInContact?.id} contact={loggedInContact} onSelectMembership={selectMembership} />;
     if (isLoggedIn && screen === 'Documents') return <PortalDocuments contactId={loggedInContact?.id} />;
     if (isLoggedIn && screen === 'Invoices') return <PortalInvoices contactId={loggedInContact?.id} />;
     if (isLoggedIn && screen === 'Insurance') return <InsuranceApp contact={loggedInContact} onClose={() => setScreen('portal')} />;
@@ -1305,9 +1324,9 @@ export default function AccreditationApp() {
                   </div>
                 </div>
                 {registerStage === 'details' ? (
-                  <RegisterDetailsStep acc={acc} setAccField={setAccField} toggleInterest={toggleInterest} />
+                  <RegisterDetailsStep acc={acc} setAccField={setAccField} toggleInterest={toggleInterest} showErrors={attemptedNext} />
                 ) : (
-                  <RegisterAddressStep acc={acc} setAddrField={setAddrField} setAccField={setAccField} onManualEntry={enterAddressManually} />
+                  <RegisterAddressStep acc={acc} setAddrField={setAddrField} setAccField={setAccField} onManualEntry={enterAddressManually} showErrors={attemptedNext} />
                 )}
               </div>
             </div>
@@ -1315,7 +1334,14 @@ export default function AccreditationApp() {
               <button type="button" className="acc-back-btn" onClick={handleGateBack}>← Back</button>
               {!onAddressLookup && (
                 <div className="acc-footer-right">
-                  <button type="button" className="acc-btn-primary" disabled={!footerEnabled} onClick={onContinue}>{footerLabel}</button>
+                  {!footerEnabled && <span className="acc-footer-guidance">Complete the required fields to continue.</span>}
+                  <button
+                    type="button"
+                    className={`acc-btn-primary${!footerEnabled ? ' acc-btn-primary-blocked' : ''}`}
+                    onClick={() => { if (!footerEnabled) { setAttemptedNext(true); return; } onContinue(); }}
+                  >
+                    {footerLabel}
+                  </button>
                 </div>
               )}
             </div>
@@ -1392,12 +1418,12 @@ export default function AccreditationApp() {
 
     const steps = [
       <AccountStep acc={acc} setAccField={setAccField} />,
-      <DetailsStep acc={acc} setAccField={setAccField} />,
+      <DetailsStep acc={acc} setAccField={setAccField} showErrors={attemptedNext} />,
       <InterestsStep acc={acc} toggleInterest={toggleInterest} />,
-      <AddressStep acc={acc} setAddrField={setAddrField} setAccField={setAccField} />,
+      <AddressStep acc={acc} setAddrField={setAddrField} setAccField={setAccField} showErrors={attemptedNext} />,
       <DeclarationsStep acc={acc} setDeclaration={setDeclaration} />,
       <CoursesStep acc={acc} toggleCourse={toggleCourse} courses={courses} coursesError={coursesError} />,
-      <SchoolStep acc={acc} setSchField={setSchField} setAccField={setAccField} copyCorrToSch={copyCorrToSch} onManualEntry={enterSchoolManually} />,
+      <SchoolStep acc={acc} setSchField={setSchField} setAccField={setAccField} copyCorrToSch={copyCorrToSch} onManualEntry={enterSchoolManually} showErrors={attemptedNext} />,
       <GeocodingStep acc={acc} setSchField={setSchField} />,
       <TutorsVenuesStep acc={acc} setAccField={setAccField} onOtChange={onOtChange} setTutorCount={setTutorCount} setTutorField={setTutorField} />,
       <SummaryStep acc={acc} setAccField={setAccField} onPay={finishAccred} onSave={saveQuote} courses={courses} submitting={submittingAccred} checkingMembership={checkingMembership} membershipRequired={membershipDecision?.membershipRequired} membershipError={membershipError} onRetryMembership={retryMembershipCheck} />,
@@ -1417,7 +1443,13 @@ export default function AccreditationApp() {
             <div className="acc-footer-right">
               {!nextEnabled && <span className="acc-footer-guidance">Complete the required fields to continue.</span>}
               {stepIndex >= 5 && <button type="button" className="acc-btn-secondary" disabled={savingDraft} onClick={saveQuote}>{savingDraft ? 'Saving…' : 'Save & finish later'}</button>}
-              <button type="button" className="acc-btn-primary" disabled={!nextEnabled} onClick={goNext}>{nextLabel}</button>
+              <button
+                type="button"
+                className={`acc-btn-primary${!nextEnabled ? ' acc-btn-primary-blocked' : ''}`}
+                onClick={() => { if (!nextEnabled) { setAttemptedNext(true); return; } goNext(); }}
+              >
+                {nextLabel}
+              </button>
             </div>
           </div>
         )}

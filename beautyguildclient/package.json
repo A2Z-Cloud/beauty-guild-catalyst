@@ -13,6 +13,7 @@
     "web-vitals": "^1.1.2",
     "zcatalyst-cli-plugin-react": "^0.0.4"
   },
+  "proxy": "https://beautyguild-20117268527.development.catalystserverless.eu",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build && node scripts/postbuild-membership-quote.js",

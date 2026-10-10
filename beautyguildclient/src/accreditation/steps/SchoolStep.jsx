@@ -3,7 +3,7 @@ import { COUNTRIES, COUNTRY_META, countryOptionLabel, capitalizeFirst } from '..
 import PhoneField from '../components/PhoneField';
 import LoqateAddressLookup from '../components/LoqateAddressLookup';
 
-export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSch, onManualEntry }) {
+export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSch, onManualEntry, showErrors }) {
   const sch = acc.sch;
   const isUK = sch.country === 'United Kingdom';
   // Non-UK addresses have no postcode-lookup equivalent here, so the manual fields show
@@ -11,6 +11,11 @@ export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSc
   // for the UK/Loqate flow - without this, a non-UK school looked stuck on a postcode
   // lookup that could never return a result.
   const showManualFields = !isUK || acc.schLooked;
+  const nameMissing = showErrors && !sch.name;
+  const l1Missing = showErrors && !sch.l1;
+  const townMissing = showErrors && !sch.town;
+  const mobileMissing = showErrors && (sch.mobile || '').replace(/\D/g, '').length < 10;
+  const emailMissing = showErrors && !sch.email;
 
   // Contact Name is pre-populated from "Your details" automatically - no button needed for this one field.
   useEffect(() => {
@@ -63,7 +68,8 @@ export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSc
         </div>
         <div className="acc-field" style={{ marginBottom: showManualFields ? 16 : 0 }}>
           <label>School Name *</label>
-          <input className="acc-input" value={sch.name} onChange={(e) => setSchField('name', e.target.value)} placeholder="Your Training School Name" />
+          <input className={`acc-input${nameMissing ? ' input-error' : ''}`} value={sch.name} onChange={(e) => setSchField('name', e.target.value)} placeholder="Your Training School Name" />
+          {nameMissing && <div className="acc-field-error">Enter your school name.</div>}
         </div>
 
         {isUK && !acc.schLooked && (
@@ -87,9 +93,10 @@ export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSc
             <div className="acc-field">
               <label>Address Line 1 *</label>
               <input
-                className="acc-input" value={sch.l1} onChange={(e) => setSchField('l1', e.target.value)}
+                className={`acc-input${l1Missing ? ' input-error' : ''}`} value={sch.l1} onChange={(e) => setSchField('l1', e.target.value)}
                 onBlur={(e) => setSchField('l1', capitalizeFirst(e.target.value))}
               />
+              {l1Missing && <div className="acc-field-error">Enter address line 1.</div>}
             </div>
             <div className="acc-field">
               <label>Address Line 2</label>
@@ -108,9 +115,10 @@ export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSc
             <div className="acc-field">
               <label>Town *</label>
               <input
-                className="acc-input" value={sch.town} onChange={(e) => setSchField('town', e.target.value)}
+                className={`acc-input${townMissing ? ' input-error' : ''}`} value={sch.town} onChange={(e) => setSchField('town', e.target.value)}
                 onBlur={(e) => setSchField('town', capitalizeFirst(e.target.value))}
               />
+              {townMissing && <div className="acc-field-error">Enter the training centre's town / city.</div>}
             </div>
             <div className="acc-field">
               <label>County</label>
@@ -139,10 +147,13 @@ export default function SchoolStep({ acc, setSchField, setAccField, copyCorrToSc
               value={sch.mobile}
               onChange={(v) => setSchField('mobile', v)}
               placeholder="e.g. 07700 000000"
+              error={mobileMissing}
             />
+            {mobileMissing && <div className="acc-field-error">Enter a valid mobile number (at least 10 digits).</div>}
             <div className="acc-field" style={{ marginTop: 16, marginBottom: 0 }}>
               <label>Email *</label>
-              <input className="acc-input" value={sch.email} onChange={(e) => setSchField('email', e.target.value)} placeholder="e.g. centre@example.com" />
+              <input className={`acc-input${emailMissing ? ' input-error' : ''}`} value={sch.email} onChange={(e) => setSchField('email', e.target.value)} placeholder="e.g. centre@example.com" />
+              {emailMissing && <div className="acc-field-error">Enter the training centre's email address.</div>}
             </div>
           </>
         )}

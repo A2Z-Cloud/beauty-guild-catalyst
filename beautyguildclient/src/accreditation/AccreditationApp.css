@@ -696,6 +696,27 @@
 .acc-input:hover, .acc-select:hover { border-color: var(--brand-pink); }
 .acc-input:focus, .acc-select:focus { border-color: var(--brand-pink); box-shadow: 0 0 0 3px rgba(224, 0, 127, .09); }
 
+.acc-dial-code { position: relative; width: 92px; flex-shrink: 0; }
+.acc-dial-code-trigger {
+  display: flex; align-items: center; gap: 7px; width: 100%; height: 100%;
+  cursor: pointer; font-size: 13px; color: #000; text-align: left;
+}
+.acc-flag { width: 18px; height: 13px; flex-shrink: 0; border-radius: 2px; }
+.acc-dial-code-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  width: 220px; max-height: 260px; overflow-y: auto;
+  background: #fff; border: 1.5px solid var(--brand-pink-border); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .14);
+  list-style: none; margin: 0; padding: 6px;
+}
+.acc-dial-code-option {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 9px; border-radius: 7px; font-size: 13px; color: #000;
+  text-align: left; cursor: pointer;
+}
+.acc-dial-code-option:hover { background: var(--brand-pink-soft); }
+.acc-dial-code-option.is-selected { background: var(--brand-pink-soft); font-weight: 700; }
+
 .acc-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
 .tutor-rows { display: grid; gap: 14px; margin-top: 16px; }
 .tutor-row { padding-top: 14px; border-top: 1px solid #EEECF4; }
@@ -844,6 +865,10 @@
 }
 
 .acc-btn-primary:disabled { background: #F3D3E4; cursor: not-allowed; box-shadow: none; opacity: .8; }
+/* Looks the same as :disabled, but stays clickable - clicking it is what reveals which
+   required fields are missing, rather than silently doing nothing. */
+.acc-btn-primary-blocked { background: #F3D3E4; box-shadow: none; opacity: .8; }
+.acc-btn-primary-blocked:hover { background: #F3D3E4; }
 
 .acc-btn-secondary {
   background: #fff;

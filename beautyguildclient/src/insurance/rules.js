@@ -19,7 +19,7 @@ export function evaluateInsuranceRules(state) {
     results.push(result(RULE_STATUS.STOP, 'UNSUPPORTED_TERRITORY', 'We cannot complete an online quotation for this territory.', 'Customer outside supported territory.'));
   }
 
-  if (positive(state.employees) + positive(state.subcontractors) > 4) {
+  if ((state.namedPeople || []).length > 4) {
     results.push(result(RULE_STATUS.REFER, 'NAMED_PEOPLE_LIMIT', 'The Insurance team needs to review the number of people working in your business.', 'More than four named employees/subcontractors.'));
   }
 
@@ -38,6 +38,16 @@ export function evaluateInsuranceRules(state) {
       const totalContents = ['computers','equipment','stock','generalContents','tenantImprovements','rentPayable']
         .reduce((sum, key) => sum + positive(state[key]), 0);
       if (totalContents > 250000) results.push(result(RULE_STATUS.STOP, 'CONTENTS_LIMIT', 'Your Contents sum insured is above £250,000.'));
+      if (state.soleOccupation === 'no') {
+        results.push(result(RULE_STATUS.REFER, 'SOLE_OCCUPATION', 'The Insurance team needs to review sole occupation of your premises.'));
+      }
+      if (state.standardConstruction === 'no' && state.nonStandardOver15 === 'yes') {
+        results.push(result(RULE_STATUS.REFER, 'NON_STANDARD_CONSTRUCTION_CONTENTS', 'The construction of the premises needs to be reviewed by the Insurance team.'));
+      }
+    }
+
+    if (state.buildingsCover && state.buildingsSubsidenceDeclaration === 'no') {
+      results.push(result(RULE_STATUS.STOP, 'BUILDINGS_SUBSIDENCE', 'We cannot continue this quotation online based on the subsidence declaration for your buildings cover.'));
     }
 
     if (state.buildingsCover) {

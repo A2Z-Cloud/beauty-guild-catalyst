@@ -3,6 +3,11 @@
   --insurance-pink-soft: #faeaf2;
   --insurance-border: rgba(238, 62, 150, .35);
   width: 100%;
+  font-family: var(--font-body, 'Open Sans', sans-serif);
+}
+
+.insurance-root button, .insurance-root input, .insurance-root select, .insurance-root textarea {
+  font-family: inherit;
 }
 
 .insurance-public-shell {
@@ -117,6 +122,10 @@
   grid-template-columns: minmax(0, 1fr) 270px;
 }
 
+.insurance-workspace.no-sidebar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .insurance-content { padding: 26px 24px 30px; min-width: 0; }
 .insurance-sidebar {
   border-left: 1px solid #e9e7f1;
@@ -163,10 +172,29 @@
 .insurance-choice input { margin-top: 2px; accent-color: var(--insurance-pink); }
 .insurance-choice strong { display: block; font-size: 12.5px; }
 .insurance-choice small { display: block; color: rgba(0,0,0,.58); margin-top: 3px; line-height: 1.45; }
+.insurance-info-btn {
+  align-items: center;
+  background: var(--insurance-pink-soft);
+  border: 0;
+  border-radius: 50%;
+  color: var(--insurance-pink);
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 800;
+  height: 18px;
+  justify-content: center;
+  margin-left: auto;
+  width: 18px;
+}
+.insurance-info-text { background: #faf9fb; border-radius: 8px; color: rgba(0,0,0,.68); font-size: 11.5px; line-height: 1.55; margin: 6px 0 0; padding: 10px 12px; }
 
 .insurance-section { margin-top: 24px; }
 .insurance-section-title { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
 .insurance-section-title h3 { margin: 0; font-size: 15px; }
+.insurance-section-title span { font-size: 11px; font-weight: 600; color: rgba(0,0,0,.58); white-space: nowrap; }
 
 .insurance-core-card,
 .insurance-panel,

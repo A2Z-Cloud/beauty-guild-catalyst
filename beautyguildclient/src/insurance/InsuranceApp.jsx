@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import './Insurance.css';
 import LoqateAddressLookup from '../accreditation/components/LoqateAddressLookup';
-import { calculateInsuranceQuote, NON_SALON_EQUIPMENT, NON_SALON_EL, TREATMENT_EXTENSIONS, salonMedicalMalpractice } from './pricing';
+import { calculateInsuranceQuote, NON_SALON_EQUIPMENT, NON_SALON_EL, TREATMENT_EXTENSIONS, TEACHING_REQUIREMENTS, salonMedicalMalpractice } from './pricing';
 import { evaluateInsuranceRules, RULE_STATUS } from './rules';
 import { getQuoteDocuments, INSURANCE_LINKS } from './documents';
-import { loadInsuranceDraft, saveInsuranceDraft } from './drafts';
+import { loadInsuranceDraft, saveInsuranceDraft, clearInsuranceDraft } from './drafts';
 
 const STEPS = ['About you', 'Your business', 'Your cover', 'Property', 'Important info', 'Your quote'];
 
@@ -27,8 +27,8 @@ const DECLARATIONS = [
 
 const initialAddress = { l1: '', l2: '', l3: '', town: '', county: '', postcode: '', country: 'United Kingdom', lookedUp: false };
 
-function territoryFromCountry(country = '') {
-  const normalized = country.trim().toLowerCase();
+function territoryFromCountry(country) {
+  const normalized = String(country || '').trim().toLowerCase();
   if (!normalized || normalized === 'united kingdom' || normalized === 'uk' || normalized === 'great britain') return 'uk';
   if (normalized.includes('channel island') || normalized === 'jersey' || normalized === 'guernsey') return 'ci';
   if (normalized === 'isle of man') return 'iom';
@@ -36,13 +36,10 @@ function territoryFromCountry(country = '') {
 }
 
 function isAddressComplete(address) {
-  return !!(address.l1.trim() && address.town.trim() && address.postcode.trim() && address.country.trim());
+  return !!(String(address.l1 || '').trim() && String(address.town || '').trim() && String(address.postcode || '').trim() && String(address.country || '').trim());
 }
 
-function initialState(contact) {
-  const draftIdentity = contact?.email || null;
-  const saved = draftIdentity ? loadInsuranceDraft(draftIdentity) : null;
-  if (saved) return saved;
+function freshState(contact) {
   const territory = territoryFromCountry(contact?.country);
   const country = contact?.country || TERRITORY_COUNTRIES[territory];
   return {
@@ -71,8 +68,7 @@ function initialState(contact) {
     turnover: 85000,
     wageRoll: 50000,
     salonCount: 1,
-    employees: 0,
-    subcontractors: 0,
+    namedPeople: [],
     namedPeopleCover: false,
     treatmentExtensions: [],
     qualifiedForTreatments: null,
@@ -106,6 +102,10 @@ function initialState(contact) {
     floodHistory: 'no',
     basement: 'no',
     subsidenceHistory: 'no',
+    soleOccupation: 'yes',
+    unoccupiedDeclaration: 'yes',
+    flatRoof: 'no',
+    buildingsSubsidenceDeclaration: 'yes',
     declarations: Array(7).fill(null),
     informationAccurate: null,
     ethicsAccepted: null,
@@ -113,6 +113,62 @@ function initialState(contact) {
     nonAdvisedAccepted: null,
     paymentFrequency: 'annual',
   };
+}
+
+function initialState(contact) {
+  const draftIdentity = contact?.email || null;
+  const saved = draftIdentity ? loadInsuranceDraft(draftIdentity) : null;
+  return saved || freshState(contact);
+}
+
+const COVER_HIGHLIGHTS = [
+  ['Medical Malpractice', 'Core treatment liability cover included with every quote.'],
+  ["Employers' & Public Liability", 'For salons and non-salon businesses with employees or subcontractors.'],
+  ['Treatment extensions', 'Dermaplaning, Microblading, Advanced Electrolysis and more.'],
+  ['Teaching & Student cover', 'For members who teach alongside their own practice.'],
+  ['Salon property cover', 'Contents, Buildings, Money and Business Interruption for salon owners.'],
+  ['Business equipment cover', 'For mobile, home-based and rented-room professionals.'],
+];
+
+function InsuranceHome({ publicEntry, onBack, draft, onStart, onResume, onDiscard }) {
+  return <>
+    <div className="insurance-banner">
+      {!publicEntry && onBack && <button type="button" className="insurance-button link" style={{ marginBottom: 10, padding: 0 }} onClick={onBack}>← Back to portal</button>}
+      <div className="insurance-eyebrow">BEAUTY GUILD INSURANCE</div>
+      <h1>Insurance designed for beauty professionals</h1>
+      <p>Build your quotation step by step. We'll only ask questions relevant to your business and selected cover.</p>
+      <ExternalLinks includeTreatments />
+    </div>
+
+    <div className="insurance-section">
+      <div className="insurance-section-title"><h3>Available insurance</h3></div>
+      <div className="insurance-choice-grid">
+        {COVER_HIGHLIGHTS.map(([title, body]) => <div className="insurance-choice" key={title}><span><strong>{title}</strong><small>{body}</small></span></div>)}
+      </div>
+    </div>
+
+    <div className="insurance-section">
+      <div className="insurance-section-title"><h3>Draft applications</h3></div>
+      {draft ? (
+        <div className="insurance-doc-row">
+          <div>
+            <strong>{draft.route === 'salon' ? 'Salon' : 'Non-Salon'} insurance quote</strong>
+            <small>Step {Number(draft.step || 0) + 1} of {STEPS.length}{draft.savedAt ? ` · Saved ${new Date(draft.savedAt).toLocaleString('en-GB')}` : ''}</small>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="insurance-button secondary" onClick={onDiscard}>Discard</button>
+            <button type="button" className="insurance-button primary" onClick={onResume}>Continue quote →</button>
+          </div>
+        </div>
+      ) : (
+        <div className="insurance-panel"><span style={{ fontSize: 12, color: 'rgba(0,0,0,.6)' }}>No draft applications yet.</span></div>
+      )}
+    </div>
+
+    <div className="insurance-section" style={{ textAlign: 'center' }}>
+      <button type="button" className="insurance-button primary" style={{ padding: '13px 22px', fontSize: 13 }} onClick={onStart}>Get an insurance quote →</button>
+    </div>
+  </>;
 }
 
 function ExternalLinks({ includeTreatments = false, includeEthics = false }) {
@@ -222,20 +278,22 @@ function BusinessStep({ state, setField }) {
         <div className="insurance-field"><label>Number of salons</label><input className="insurance-input" type="number" min="1" value={state.salonCount} onChange={(e) => setField('salonCount', e.target.value)} /></div>
       </div>
     </div>}
-    <div className="insurance-section">
-      <div className="insurance-section-title"><h3>People working in the business</h3><span>Named person cover is separate from Employers' Liability</span></div>
-      <div className="insurance-panel insurance-grid-2">
-        <div className="insurance-field"><label>Employees</label><input className="insurance-input" type="number" min="0" value={state.employees} onChange={(e) => setField('employees', e.target.value)} /></div>
-        <div className="insurance-field"><label>Subcontractors</label><input className="insurance-input" type="number" min="0" value={state.subcontractors} onChange={(e) => setField('subcontractors', e.target.value)} /></div>
-      </div>
-    </div>
   </>;
 }
 
 function CoverStep({ state, setField }) {
+  const [openInfo, setOpenInfo] = useState(null);
+  const toggleInfo = (id) => (e) => { e.preventDefault(); e.stopPropagation(); setOpenInfo(openInfo === id ? null : id); };
   const toggleExtension = (id) => setField('treatmentExtensions', state.treatmentExtensions.includes(id) ? state.treatmentExtensions.filter((item) => item !== id) : [...state.treatmentExtensions, id]);
   const setBool = (key, value) => setField(key, value === 'yes');
   const corePrice = state.route === 'salon' ? salonMedicalMalpractice(state.turnover) : 32.5;
+  const namedPeople = state.namedPeople || [];
+  const addNamedPerson = () => {
+    if (namedPeople.length >= 4) return;
+    setField('namedPeople', [...namedPeople, { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, type: 'employee', firstName: '', lastName: '' }]);
+  };
+  const updateNamedPerson = (id, key, value) => setField('namedPeople', namedPeople.map((person) => (person.id === id ? { ...person, [key]: value } : person)));
+  const removeNamedPerson = (id) => setField('namedPeople', namedPeople.filter((person) => person.id !== id));
   return <>
     <div className="insurance-step-heading"><div className="insurance-eyebrow">YOUR COVER</div><h2>Build your cover</h2><p>The page expands only when you add cover that needs more information.</p></div>
     <div className="insurance-core-card">
@@ -250,16 +308,31 @@ function CoverStep({ state, setField }) {
 
     <div className="insurance-cover-row">
       <div className="insurance-cover-row-header"><div><h3>Named employee / subcontractor cover</h3><p>Separate cover for people working in your business.</p></div><YesNo value={state.namedPeopleCover ? 'yes' : 'no'} onChange={(v) => setBool('namedPeopleCover', v)} /></div>
+      {state.namedPeopleCover && <div className="insurance-subpanel">
+        {namedPeople.map((person) => <div key={person.id} style={{ alignItems: 'end', display: 'flex', gap: 10, marginBottom: 10 }}>
+          <div className="insurance-field" style={{ flex: '0 0 130px' }}><label>Type</label><select className="insurance-select" value={person.type} onChange={(e) => updateNamedPerson(person.id, 'type', e.target.value)}><option value="employee">Employee</option><option value="subcontractor">Subcontractor</option></select></div>
+          <div className="insurance-field" style={{ flex: 1 }}><label>First name</label><input className="insurance-input" value={person.firstName} onChange={(e) => updateNamedPerson(person.id, 'firstName', e.target.value)} /></div>
+          <div className="insurance-field" style={{ flex: 1 }}><label>Last name</label><input className="insurance-input" value={person.lastName} onChange={(e) => updateNamedPerson(person.id, 'lastName', e.target.value)} /></div>
+          <button type="button" className="insurance-button link" style={{ flex: '0 0 auto', height: 38 }} onClick={() => removeNamedPerson(person.id)}>Remove</button>
+        </div>)}
+        {namedPeople.length < 4
+          ? <button type="button" className="insurance-button secondary" onClick={addNamedPerson}>+ Add person</button>
+          : <small>Up to 4 named people can be added online. For more, please call our team.</small>}
+      </div>}
     </div>
 
     <div className="insurance-cover-row">
       <div className="insurance-cover-row-header"><div><h3>Additional treatment extensions</h3><p>Add cover only for treatments you actually provide.</p></div></div>
       <div className="insurance-subpanel">
         <div className="insurance-choice-grid">
-          {TREATMENT_EXTENSIONS.map((item) => <label key={item.id} className={`insurance-choice ${state.treatmentExtensions.includes(item.id) ? 'selected' : ''}`}>
-            <input type="checkbox" checked={state.treatmentExtensions.includes(item.id)} onChange={() => toggleExtension(item.id)} />
-            <span><strong>{item.name}</strong><small>£{item.premium.toFixed(2)} + IPT · <a className="insurance-link" href={INSURANCE_LINKS.treatments.href} target="_blank" rel="noreferrer">requirements</a></small></span>
-          </label>)}
+          {TREATMENT_EXTENSIONS.map((item) => <div key={item.id}>
+            <label className={`insurance-choice ${state.treatmentExtensions.includes(item.id) ? 'selected' : ''}`}>
+              <input type="checkbox" checked={state.treatmentExtensions.includes(item.id)} onChange={() => toggleExtension(item.id)} />
+              <span><strong>{item.name}</strong><small>£{item.premium.toFixed(2)} + IPT</small></span>
+              <button type="button" className="insurance-info-btn" aria-label={`${item.name} requirements`} onClick={toggleInfo(item.id)}>i</button>
+            </label>
+            {openInfo === item.id && <p className="insurance-info-text">{item.requirements}</p>}
+          </div>)}
         </div>
         {!!state.treatmentExtensions.length && <div className="insurance-subpanel">
           <div className="insurance-cover-row-header"><div><h3>Do you and relevant employees hold the required qualifications?</h3></div><YesNo value={state.qualifiedForTreatments} onChange={(v) => setField('qualifiedForTreatments', v)} /></div>
@@ -269,7 +342,8 @@ function CoverStep({ state, setField }) {
     </div>
 
     <div className="insurance-cover-row">
-      <div className="insurance-cover-row-header"><div><h3>Teaching cover</h3><p>For customers who teach students.</p></div></div>
+      <div className="insurance-cover-row-header"><div><h3>Teaching cover</h3><p>For customers who teach students.</p></div><button type="button" className="insurance-info-btn" aria-label="Teaching cover requirements" onClick={toggleInfo('teaching')}>i</button></div>
+      {openInfo === 'teaching' && <p className="insurance-info-text">{TEACHING_REQUIREMENTS}</p>}
       <div className="insurance-subpanel insurance-grid-2">
         <label className={`insurance-choice ${state.teachingCover === 'none' ? 'selected' : ''}`}><input type="radio" name="teaching" checked={state.teachingCover === 'none'} onChange={() => setField('teachingCover', 'none')} /><span><strong>Not required</strong></span></label>
         <label className={`insurance-choice ${state.teachingCover === 'standard' ? 'selected' : ''}`}><input type="radio" name="teaching" checked={state.teachingCover === 'standard'} onChange={() => setField('teachingCover', 'standard')} /><span><strong>Teaching + Student Cover</strong><small>£75 + IPT</small></span></label>
@@ -347,6 +421,25 @@ function PropertyStep({ state, setField }) {
       <div className="insurance-field"><label>Does the property have a basement?</label><select className="insurance-select" value={state.basement} onChange={(e) => setField('basement', e.target.value)}><option value="no">No</option><option value="yes">Yes</option></select></div>
       <div className="insurance-field"><label>Previous subsidence / landslip / structural movement?</label><select className="insurance-select" value={state.subsidenceHistory} onChange={(e) => setField('subsidenceHistory', e.target.value)}><option value="no">No</option><option value="yes">Yes</option></select></div>
     </div>
+
+    <div className="insurance-section">
+      <div className="insurance-section-title"><h3>Contents construction & occupancy</h3></div>
+      <div className="insurance-cover-row"><div className="insurance-cover-row-header"><div><h3>Sole occupation</h3><p>My business premises are occupied solely by me for the purposes of the business or with an element of residential accommodation.</p></div><YesNo value={state.soleOccupation} onChange={(v) => setField('soleOccupation', v)} /></div></div>
+      <div className="insurance-cover-row"><div className="insurance-cover-row-header"><div><h3>Unoccupied</h3><p>My business premises are not left unoccupied for more than 30 consecutive days.</p></div><YesNo value={state.unoccupiedDeclaration} onChange={(v) => setField('unoccupiedDeclaration', v)} /></div></div>
+      <div className="insurance-cover-row">
+        <div className="insurance-cover-row-header"><div><h3>Standard construction</h3><p>My premises are of Standard Construction.</p></div><YesNo value={state.standardConstruction} onChange={(v) => setField('standardConstruction', v)} /></div>
+        {state.standardConstruction === 'no' && <div className="insurance-subpanel"><div className="insurance-cover-row-header"><div><h3>Is more than 15% of your premises made of Non-Standard Construction?</h3></div><YesNo value={state.nonStandardOver15} onChange={(v) => setField('nonStandardOver15', v)} /></div></div>}
+      </div>
+      <div className="insurance-cover-row">
+        <div className="insurance-cover-row-header"><div><h3>Flat roof</h3><p>Is your premises constructed with a Flat Roof?</p></div><YesNo value={state.flatRoof} onChange={(v) => setField('flatRoof', v)} /></div>
+        {state.flatRoof === 'yes' && <p className="insurance-help" style={{ marginTop: 8 }}>A flat roof may affect your cover - the Insurance team may be in touch with guidance, but you can continue with your quote.</p>}
+      </div>
+    </div>
+
+    {state.buildingsCover && <div className="insurance-section">
+      <div className="insurance-section-title"><h3>Buildings declaration</h3></div>
+      <div className="insurance-cover-row"><div className="insurance-cover-row-header"><div><h3>Subsidence</h3><p>My business premises are free from cracks or other signs of damage that may be due to subsidence, landslip or heave and have not previously suffered damage by any of these and are not in a known subsidence area.</p></div><YesNo value={state.buildingsSubsidenceDeclaration} onChange={(v) => setField('buildingsSubsidenceDeclaration', v)} /></div></div>
+    </div>}
   </>;
 }
 
@@ -440,7 +533,7 @@ function QuoteStep({ state, quote, ruleResult, setField }) {
   </>;
 }
 
-function ExitModal({ mode, publicEntry, onDismiss, onExit }) {
+function ExitModal({ mode, onDismiss, onExit }) {
   if (!mode) return null;
 
   const saved = mode === 'saved';
@@ -461,13 +554,16 @@ function ExitModal({ mode, publicEntry, onDismiss, onExit }) {
       <p>{body}</p>
       <div className="insurance-modal-actions">
         {!saved && <button type="button" className="insurance-button secondary" onClick={onDismiss}>{failed ? 'Close' : 'Continue editing'}</button>}
-        {!failed && <button type="button" className={`insurance-button ${saved ? 'primary' : 'danger'}`} onClick={onExit}>{saved ? (publicEntry ? 'Return to member login' : 'Return to dashboard') : 'Exit without saving'}</button>}
+        {!failed && <button type="button" className={`insurance-button ${saved ? 'primary' : 'danger'}`} onClick={onExit}>{saved ? 'Back to Insurance home' : 'Exit without saving'}</button>}
       </div>
     </div>
   </div>;
 }
 
 export default function InsuranceApp({ contact = null, publicEntry = false, onClose }) {
+  const identity = contact?.email || null;
+  const [view, setView] = useState('home');
+  const [draftSnapshot, setDraftSnapshot] = useState(() => (identity ? loadInsuranceDraft(identity) : null));
   const [state, setState] = useState(() => initialState(contact));
   const [isDirty, setIsDirty] = useState(false);
   const [exitModal, setExitModal] = useState(null);
@@ -483,7 +579,14 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     if (ruleResult.stop.length) return false;
     if (state.step === 0) return !!(state.email && state.firstName && state.lastName && isAddressComplete(state.address));
     if (state.step === 1) return state.workingFromHome || state.mobile || state.rentedRoom || state.subcontractor || state.salon;
-    if (state.step === 2 && state.treatmentExtensions.length) return !!(state.qualifiedForTreatments && state.patchTesting);
+    if (state.step === 2) {
+      if (state.treatmentExtensions.length && !(state.qualifiedForTreatments && state.patchTesting)) return false;
+      if (state.namedPeopleCover) {
+        const people = state.namedPeople || [];
+        if (!people.length) return false;
+        if (!people.every((person) => person.firstName.trim() && person.lastName.trim())) return false;
+      }
+    }
     if (state.step === 4) return state.declarations.every(Boolean)
       && state.informationAccurate === 'yes'
       && state.ethicsAccepted === 'yes'
@@ -511,19 +614,22 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     go(state.step + 1);
   };
 
+  // "Exit" from the wizard means back to the Insurance home screen, not leaving the Insurance
+  // module altogether - the home screen itself has the one control (onBack) that does that.
   const exitJourney = () => {
     setExitModal(null);
-    if (onClose) onClose();
-    else window.location.assign(window.location.pathname);
+    setView('home');
   };
 
   const saveAndExit = () => {
-    const saved = saveInsuranceDraft(state, contact?.email || state.email || 'public');
+    const saveIdentity = contact?.email || state.email || 'public';
+    const saved = saveInsuranceDraft(state, saveIdentity);
     if (!saved) {
       setExitModal('error');
       return;
     }
     setIsDirty(false);
+    if (identity && saveIdentity === identity) setDraftSnapshot(loadInsuranceDraft(identity));
     setExitModal('saved');
   };
 
@@ -531,6 +637,22 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     if (isDirty) setExitModal('cancel');
     else exitJourney();
   };
+
+  const startFresh = () => {
+    setState(freshState(contact));
+    setIsDirty(false);
+    setView('wizard');
+  };
+
+  const resumeDraft = () => setView('wizard');
+
+  const discardDraft = () => {
+    if (identity) clearInsuranceDraft(identity);
+    setDraftSnapshot(null);
+  };
+
+  const hasBusinessSelection = state.workingFromHome || state.mobile || state.rentedRoom || state.subcontractor || state.salon;
+  const showSidebar = state.step > 1 || (state.step === 1 && hasBusinessSelection);
 
   const stepComponent = [
     <AboutStep state={state} setField={setField} />,
@@ -551,9 +673,9 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
     <div className="insurance-shell">
       <div className="insurance-head"><div><div className="insurance-eyebrow">INSURANCE QUOTATION</div><h2>{STEPS[state.step]}</h2></div><button type="button" className="insurance-button link" disabled={!contact?.email && !state.email.trim()} title={!contact?.email && !state.email.trim() ? 'Enter your email address before saving.' : undefined} onClick={saveAndExit}>Save & exit</button></div>
       <div className="insurance-progress">{STEPS.map((label, index) => <div key={label} className={`insurance-progress-item ${index === state.step ? 'active' : ''} ${index < state.step ? 'complete' : ''}`}>{index + 1}. {label}</div>)}</div>
-      <div className="insurance-workspace">
+      <div className={`insurance-workspace ${!showSidebar ? 'no-sidebar' : ''}`}>
         <div className="insurance-content">{stepComponent}</div>
-        <aside className="insurance-sidebar">
+        {showSidebar && <aside className="insurance-sidebar">
           <div className="insurance-eyebrow">LIVE QUOTE</div>
           <div className="insurance-summary-total">£{quote.total.toFixed(2)}</div>
           <small>£{quote.monthly.toFixed(2)} monthly equivalent</small>
@@ -561,7 +683,7 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
           <div className={`insurance-inline ${ruleResult.overall === RULE_STATUS.PASS ? 'ok' : ruleResult.overall === RULE_STATUS.REFER ? 'warn' : 'stop'}`}>
             {ruleResult.overall === RULE_STATUS.PASS ? 'Your quotation can currently continue online.' : ruleResult.overall === RULE_STATUS.REFER ? 'Some details will need review before we can confirm your quotation.' : 'We cannot continue this quotation online with the current details.'}
           </div>
-        </aside>
+        </aside>}
       </div>
       <div className="insurance-actions">
         <div><button type="button" className="insurance-button secondary" onClick={state.step === 0 ? cancelJourney : () => go(state.step - 1)}>{state.step === 0 ? 'Cancel' : '← Back'}</button></div>
@@ -571,10 +693,20 @@ export default function InsuranceApp({ contact = null, publicEntry = false, onCl
         </div>
       </div>
     </div>
-    <ExitModal mode={exitModal} publicEntry={publicEntry} onDismiss={() => setExitModal(null)} onExit={exitJourney} />
+    <ExitModal mode={exitModal} onDismiss={() => setExitModal(null)} onExit={exitJourney} />
   </>;
 
-  if (publicEntry) return <div className="insurance-public-shell insurance-root"><div className="insurance-public-header"><div className="insurance-wordmark">beauty<span>guild</span></div><button className="insurance-button secondary" type="button" onClick={() => window.location.assign(window.location.pathname)}>Member login</button></div><main className="insurance-page">{inner}</main></div>;
+  const home = <InsuranceHome
+    publicEntry={publicEntry}
+    onBack={onClose}
+    draft={draftSnapshot}
+    onStart={startFresh}
+    onResume={resumeDraft}
+    onDiscard={discardDraft}
+  />;
+  const content = view === 'home' ? home : inner;
 
-  return <div className="acc-body insurance-root" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%', overflowY: 'auto' }}><div style={{ width: '100%', maxWidth: 1120, margin: '0 auto', padding: '24px' }}>{inner}</div></div>;
+  if (publicEntry) return <div className="insurance-public-shell insurance-root"><div className="insurance-public-header"><div className="insurance-wordmark">beauty<span>guild</span></div><button className="insurance-button secondary" type="button" onClick={() => window.location.assign(window.location.pathname)}>Member login</button></div><main className="insurance-page">{content}</main></div>;
+
+  return <div className="acc-body insurance-root" style={{ flexDirection: 'column', alignItems: 'stretch', width: '100%', overflowY: 'auto' }}><div style={{ width: '100%', maxWidth: 1120, margin: '0 auto', padding: '24px' }}>{content}</div></div>;
 }
